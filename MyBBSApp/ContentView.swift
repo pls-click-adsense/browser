@@ -1,9 +1,8 @@
 import SwiftUI
 import WebKit
 
-// MARK: - Constants (オリジナル設定)
+// MARK: - Constants
 struct AppConfig {
-    // 独自のUser-Agent。必要に応じて好きな文字列に変更してください。
     static let customUserAgent = "MyCustomBBSBrowser/1.0 (iPhone; iOS 17.0; SpecialEdition)"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
@@ -71,12 +70,11 @@ struct Post: Identifiable {
     }
 }
 
-// MARK: - WebView (独立セッション)
+// MARK: - WebView
 struct WebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // Safariとセッションを共有しない
         config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = AppConfig.customUserAgent
@@ -110,11 +108,10 @@ class BBSViewModel: ObservableObject {
                 if parts.count < 2 { return nil }
                 let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
                 guard let timestamp = Double(datId) else { return nil }
-                let pattern = "(.*) \\((\\d+)\\)$"
-                let regex = try? NSRegularExpression(pattern: pattern)
-                let match = regex?.firstMatch(in: parts[1], range: NSRange(parts[1].startIndex..., in: parts[1]))
-                let title = match.map { String(parts[1][Range($0.range(at: 1), in: parts[1])!]) } ?? parts[1]
-                let count = match.map { Int(parts[1][Range($0.range(at: 2), in: parts[1])!]) ?? 0 } ?? 0
+                let titleParts = parts[1].components(separatedBy: " (")
+                let countStr = titleParts.last?.replacingOccurrences(of: ")", with: "") ?? "0"
+                let title = titleParts.dropLast().joined(separator: " (")
+                let count = Int(countStr) ?? 0
                 let hours = max((now - timestamp) / 3600, 0.1)
                 return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
             }
@@ -180,9 +177,16 @@ class BBSViewModel: ObservableObject {
         }
         return nil
     }
+
+    func getIDStats(for p: Post) -> (current: Int, total: Int) {
+        guard let id = extractID(from: p.dateAndId) else { return (1, 1) }
+        let currentCount = posts.prefix(p.id).filter { extractID(from: $0.dateAndId) == id }.count
+        let totalCount = idCounts[id] ?? 0
+        return (currentCount, totalCount)
+    }
 }
 
-// MARK: - ContentView
+// MARK: - Views
 struct ContentView: View {
     @StateObject var viewModel = BBSViewModel()
     @State private var isShowingBrowser = false
@@ -239,7 +243,6 @@ struct ContentView: View {
     }
 }
 
-// MARK: - ThreadDetailView
 struct ThreadDetailView: View {
     @ObservedObject var viewModel: BBSViewModel
     let thread: Thread
@@ -287,7 +290,6 @@ struct ThreadDetailView: View {
     }
 }
 
-// MARK: - PostRow
 struct PostRow: View {
     let post: Post
     let viewModel: BBSViewModel
@@ -329,7 +331,6 @@ struct PostRow: View {
     }
 }
 
-// MARK: - PostView
 struct PostView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var viewModel: BBSViewModel
@@ -359,11 +360,10 @@ struct PostView: View {
     }
 }
 
-// MARK: - Shared Helpers
+// MARK: - Helpers
 enum SortOption: String, CaseIterable { case ikioi = "勢い順", resCount = "レス数順", new = "新着順" }
 struct IdentifiableID: Identifiable { let id: String }
 struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
-extension Post: Identifiable {}
 extension Data {
     var sjisString: String? {
         let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
