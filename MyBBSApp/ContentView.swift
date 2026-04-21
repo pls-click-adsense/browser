@@ -24,6 +24,7 @@ extension Data {
 }
 
 // MARK: - 3. 通信・解析ロジック (Logic)
+@MainActor
 class BBSViewModel: ObservableObject {
     @Published var threads: [Thread] = []
     @Published var posts: [Post] = []
