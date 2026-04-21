@@ -263,7 +263,6 @@ struct PostRow: View {
 // MARK: - Helpers
 struct IdentifiableID: Identifiable { let id: String }
 struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
-extension Post: Identifiable {}
 extension Data {
     var sjisString: String? {
         let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
