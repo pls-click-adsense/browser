@@ -3,7 +3,7 @@ import WebKit
 
 // MARK: - Constants
 struct AppConfig {
-    static let customUserAgent = "MyCustomBBSBrowser/1.0 (iPhone; iOS 17.0; SpecialEdition)"
+    static let customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
 }
@@ -149,45 +149,38 @@ class BBSViewModel: ObservableObject {
     }
     
     func postReply(threadId: String, name: String, mail: String, body: String) async -> String {
-        guard let url = URL(string: AppConfig.postURL) else { return "URLエラー" }
-        
+        guard let url = URL(string: AppConfig.postURL) else { return "URL Error" }
+        func sjisPercentEncode(_ str: String) -> String {
+            let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+            guard let data = str.data(using: sjisEnc) else { return "" }
+            return data.map { String(format: "%%%02X", $0) }.joined()
+        }
         let params: [(String, String)] = [
-            ("submit", "書き込む"),
-            ("mail", mail),
-            ("FROM", name),
-            ("MESSAGE", body),
             ("bbs", "liveedge"),
-            ("key", threadId)
+            ("key", threadId),
+            ("FROM", name),
+            ("mail", mail),
+            ("MESSAGE", body),
+            ("submit", "書き込む")
         ]
-        
-        let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-        let bodyString = params.compactMap { k, v in
-            guard let encodedValue = v.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
-            return "\(k)=\(encodedValue)"
-        }.joined(separator: "&")
-        
-        guard let bodyData = bodyString.data(using: sjisEnc) else { return "エンコードエラー" }
-        
+        let bodyString = params.map { "\($0)=\(sjisPercentEncode($1))" }.joined(separator: "&")
+        guard let bodyData = bodyString.data(using: .ascii) else { return "Data Error" }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = bodyData
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
         request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let resText = data.sjisString ?? "解読不可"
-            
             if resText.contains("書き込みました") || resText.contains("正常に受け付けられました") {
                 await fetchPosts(datId: threadId)
                 return "SUCCESS"
             }
             return "Status: \(status)\n\(resText)"
-        } catch {
-            return error.localizedDescription
-        }
+        } catch { return error.localizedDescription }
     }
     
     func extractID(from str: String) -> String? {
@@ -222,7 +215,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("設定・認証")) {
+                Section(header: Text("🛠 設定・認証")) {
                     Button(action: { isShowingBrowser = true }) {
                         HStack {
                             Image(systemName: "safari.fill")
@@ -234,23 +227,30 @@ struct ContentView: View {
                     Button(role: .destructive, action: { isShowingClearAlert = true }) {
                         HStack {
                             Image(systemName: "trash")
-                            Text("クッキー・キャッシュを削除")
+                            Text("キャッシュ・Cookie全削除")
                         }
                     }
                 }
                 
-                Section(header: Text("スレッド一覧")) {
+                Section(header: Text("📜 スレッド一覧")) {
                     ForEach(viewModel.threads) { t in
                         NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(t.title).font(.subheadline).lineLimit(2)
-                                HStack {
-                                    Text("res: \(t.resCount)").foregroundColor(.secondary)
-                                    Text("勢い: \(Int(t.ikioi))").foregroundColor(.red)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("💬 \(t.title)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .lineLimit(2)
+                                HStack(spacing: 12) {
+                                    Label("\(t.resCount)", systemImage: "bubble.right")
+                                    Label("\(Int(t.ikioi))", systemImage: "bolt.fill")
+                                        .foregroundColor(t.ikioi > 500 ? .red : .orange)
                                     Spacer()
-                                    Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
-                                }.font(.caption2)
+                                    Text("🕒 \(Date(timeIntervalSince1970: t.createdAt), style: .time)")
+                                }
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                             }
+                            .padding(.vertical, 2)
                         }
                     }
                 }
@@ -269,13 +269,13 @@ struct ContentView: View {
                 Button("削除する", role: .destructive) { Task { await viewModel.clearWebData() } }
                 Button("キャンセル", role: .cancel) {}
             } message: {
-                Text("クッキーやキャッシュをすべて削除します。認証状態もリセットされます。")
+                Text("Cookieを削除すると忍法帖などの認証がリセットされます。よろしいですか？")
             }
             .sheet(isPresented: $isShowingBrowser) {
                 NavigationStack {
                     WebView(url: URL(string: AppConfig.boardURL)!)
                         .ignoresSafeArea(edges: .bottom)
-                        .navigationTitle("認証セッション").navigationBarTitleDisplayMode(.inline)
+                        .navigationTitle("認証用ブラウザ").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
                 }
             }
@@ -385,12 +385,11 @@ struct PostView: View {
     @ObservedObject var viewModel: BBSViewModel
     let threadId: String
     @State private var name = ""
-    @State private var mail = "" // デフォルトを空文字に変更
+    @State private var mail = ""
     @State private var bodyText = ""
     @State private var resultMessage: String? = nil
     @State private var isShowingAlert = false
     @State private var isSending = false
-    
     var body: some View {
         NavigationStack {
             Form {
@@ -407,28 +406,19 @@ struct PostView: View {
                                 isSending = true
                                 let res = await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText)
                                 isSending = false
-                                if res == "SUCCESS" {
-                                    dismiss()
-                                } else {
-                                    resultMessage = res
-                                    isShowingAlert = true
-                                }
+                                if res == "SUCCESS" { dismiss() } else { resultMessage = res; isShowingAlert = true }
                             }
                         }.disabled(bodyText.isEmpty)
                     }
                 }
             }
-            .alert("書き込み結果", isPresented: $isShowingAlert) {
-                Button("OK") { }
-            } message: {
-                Text(resultMessage ?? "不明なエラー")
-            }
+            .alert("書き込み結果", isPresented: $isShowingAlert) { Button("OK") { } } message: { Text(resultMessage ?? "") }
         }
     }
 }
 
 // MARK: - Helpers
-enum SortOption: String, CaseIterable { case ikioi = "勢い順", resCount = "レス数順", new = "新着順" }
+enum SortOption: String, CaseIterable { case ikioi = "🔥 勢い順", resCount = "📊 レス数順", new = "✨ 新着順" }
 struct IdentifiableID: Identifiable { let id: String }
 struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
 extension Data {
