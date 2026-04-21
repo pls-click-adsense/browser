@@ -11,10 +11,14 @@ targets:
     sources:
       - MyBBSApp
     settings:
-      # 署名なしビルドを許容する設定
+      # --- ここを追加：Info.plistを自動生成する ---
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_CFBundleDisplayName: "MyBBS"
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES # 起動画面を自動生成
+      # ------------------------------------------
+      
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       ENTITLEMENTS_REQUIRED: false
-      # 開発用チームIDを空にする
       DEVELOPMENT_TEAM: ""
