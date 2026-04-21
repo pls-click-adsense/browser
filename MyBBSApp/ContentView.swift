@@ -1,4 +1,13 @@
 import SwiftUI
+import WebKit
+
+// MARK: - Constants (オリジナル設定)
+struct AppConfig {
+    // 独自のUser-Agent。必要に応じて好きな文字列に変更してください。
+    static let customUserAgent = "MyCustomBBSBrowser/1.0 (iPhone; iOS 17.0; SpecialEdition)"
+    static let boardURL = "https://bbs.eddibb.cc/liveedge/"
+    static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
+}
 
 // MARK: - Models
 struct Thread: Identifiable {
@@ -16,29 +25,45 @@ struct Post: Identifiable {
     let dateAndId: String
     let body: String
     
-    // 安価リンク装飾
+    func decodeHTMLEntities(_ text: String) -> String {
+        var decoded = text
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+        let pattern = "&#(\\d+);"
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let matches = regex?.matches(in: decoded, options: [], range: NSRange(decoded.startIndex..., in: decoded)) ?? []
+        for match in matches.reversed() {
+            if let codeRange = Range(match.range(at: 1), in: decoded),
+               let codePoint = UInt32(decoded[codeRange]),
+               let scalar = UnicodeScalar(codePoint) {
+                decoded.replaceSubrange(Range(match.range, in: decoded)!, with: String(scalar))
+            }
+        }
+        return decoded
+    }
+
     var attributedBody: AttributedString {
-        var attrString = AttributedString(body)
+        let cleanBody = decodeHTMLEntities(body)
+        var attrString = AttributedString(cleanBody)
         let pattern = ">>(\\d+)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return attrString }
-        let range = NSRange(body.startIndex..., in: body)
-        let matches = regex.matches(in: body, options: [], range: range)
+        let matches = regex.matches(in: cleanBody, options: [], range: NSRange(cleanBody.startIndex..., in: cleanBody))
         for match in matches.reversed() {
             guard let resRange = Range(match.range, in: attrString),
-                  let numRange = Range(match.range(at: 1), in: body) else { continue }
-            attrString[resRange].link = URL(string: "anka://\(body[numRange])")
+                  let numRange = Range(match.range(at: 1), in: cleanBody) else { continue }
+            attrString[resRange].link = URL(string: "anka://\(cleanBody[numRange])")
             attrString[resRange].foregroundColor = .blue
-            attrString[resRange].underlineStyle = .single
         }
         return attrString
     }
     
-    // Imgur画像抽出
     var imageUrls: [URL] {
         let pattern = "https?://(?:i\\.)?imgur\\.com/([a-zA-Z0-9]+)(?:\\.[a-z]+)?"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        let range = NSRange(body.startIndex..., in: body)
-        let matches = regex.matches(in: body, options: [], range: range)
+        let matches = regex.matches(in: body, options: [], range: NSRange(body.startIndex..., in: body))
         return matches.compactMap { match in
             guard let idRange = Range(match.range(at: 1), in: body) else { return nil }
             return URL(string: "https://i.imgur.com/\(body[idRange]).jpg")
@@ -46,10 +71,20 @@ struct Post: Identifiable {
     }
 }
 
-enum SortOption: String, CaseIterable {
-    case ikioi = "勢い順"
-    case resCount = "レス数順"
-    case new = "新着順"
+// MARK: - WebView (独立セッション)
+struct WebView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        // Safariとセッションを共有しない
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.customUserAgent = AppConfig.customUserAgent
+        return webView
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.load(URLRequest(url: url))
+    }
 }
 
 // MARK: - ViewModel
@@ -62,11 +97,10 @@ class BBSViewModel: ObservableObject {
     @Published var sortOption: SortOption = .ikioi { didSet { applySort() } }
     
     private var rawThreads: [Thread] = []
-    let baseURL = "https://bbs.eddibb.cc/liveedge/"
     
     func fetchThreadList() async {
         isFetching = true
-        guard let url = URL(string: baseURL + "subject.txt") else { return }
+        guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             guard let text = data.sjisString else { return }
@@ -99,7 +133,7 @@ class BBSViewModel: ObservableObject {
     
     func fetchPosts(datId: String) async {
         isFetching = true
-        guard let url = URL(string: baseURL + "dat/\(datId).dat") else { return }
+        guard let url = URL(string: AppConfig.boardURL + "dat/\(datId).dat") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             guard let text = data.sjisString else { return }
@@ -108,7 +142,6 @@ class BBSViewModel: ObservableObject {
                 if p.count < 4 { return nil }
                 let name = p[0].replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
                 let body = p[3].replacingOccurrences(of: "<br>", with: "\n")
-                    .replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&amp;", with: "&")
                 return Post(id: i + 1, name: name, mail: p[1], dateAndId: p[2], body: body)
             }
             var counts: [String: Int] = [:]
@@ -116,6 +149,27 @@ class BBSViewModel: ObservableObject {
             self.idCounts = counts
         } catch { print(error) }
         isFetching = false
+    }
+    
+    func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
+        guard let url = URL(string: AppConfig.postURL) else { return false }
+        let params = ["bbs": "liveedge", "key": threadId, "time": String(Int(Date().timeIntervalSince1970)), "FROM": name, "mail": mail, "MESSAGE": body, "submit": "書き込む"]
+        let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+        let bodyString = params.compactMap { k, v in "\(k)=\(v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }.joined(separator: "&")
+        guard let bodyData = bodyString.data(using: sjis) else { return false }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = bodyData
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(AppConfig.boardURL, forHTTPHeaderField: "Referer")
+        request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        
+        do {
+            _ = try await URLSession.shared.data(for: request)
+            await fetchPosts(datId: threadId)
+            return true
+        } catch { return false }
     }
     
     func extractID(from str: String) -> String? {
@@ -126,31 +180,39 @@ class BBSViewModel: ObservableObject {
         }
         return nil
     }
-    
-    func getIDStats(for p: Post) -> (current: Int, total: Int) {
-        guard let id = extractID(from: p.dateAndId) else { return (0, 0) }
-        let total = idCounts[id] ?? 0
-        let current = posts.prefix(p.id).filter { extractID(from: $0.dateAndId) == id }.count
-        return (current, total)
-    }
 }
 
-// MARK: - Main View
+// MARK: - ContentView
 struct ContentView: View {
     @StateObject var viewModel = BBSViewModel()
+    @State private var isShowingBrowser = false
     var body: some View {
         NavigationStack {
-            List(viewModel.threads) { t in
-                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(t.title).font(.subheadline).lineLimit(2).multilineTextAlignment(.leading)
+            List {
+                Section {
+                    Button(action: { isShowingBrowser = true }) {
                         HStack {
-                            Text("res: \(t.resCount)").foregroundColor(.secondary)
-                            Text("勢い: \(Int(t.ikioi))").foregroundColor(.red)
+                            Image(systemName: "shield.lefthalf.filled")
+                            Text("独立認証ブラウザ").font(.subheadline).bold()
                             Spacer()
-                            Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
-                        }.font(.caption2)
-                    }.padding(.vertical, 2)
+                            Image(systemName: "arrow.up.forward.app")
+                        }
+                    }
+                }
+                Section {
+                    ForEach(viewModel.threads) { t in
+                        NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(t.title).font(.subheadline).lineLimit(2)
+                                HStack {
+                                    Text("res: \(t.resCount)").foregroundColor(.secondary)
+                                    Text("勢い: \(Int(t.ikioi))").foregroundColor(.red)
+                                    Spacer()
+                                    Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
+                                }.font(.caption2)
+                            }
+                        }
+                    }
                 }
             }
             .navigationTitle("liveedge")
@@ -163,19 +225,28 @@ struct ContentView: View {
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
             }
+            .sheet(isPresented: $isShowingBrowser) {
+                NavigationStack {
+                    WebView(url: URL(string: AppConfig.boardURL)!)
+                        .ignoresSafeArea(edges: .bottom)
+                        .navigationTitle("独立セッション").navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
+                }
+            }
             .refreshable { await viewModel.fetchThreadList() }
             .onAppear { if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } } }
         }
     }
 }
 
-// MARK: - Detail View
+// MARK: - ThreadDetailView
 struct ThreadDetailView: View {
     @ObservedObject var viewModel: BBSViewModel
     let thread: Thread
     @State private var selectedID: String? = nil
     @State private var targetRes: Post? = nil
     @State private var zoomImageURL: URL? = nil
+    @State private var isShowingPostView = false
     
     var body: some View {
         List(viewModel.posts) { post in
@@ -186,45 +257,46 @@ struct ThreadDetailView: View {
         }
         .listStyle(.plain)
         .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
-                if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
-            }
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: { isShowingPostView = true }) {
+                Image(systemName: "pencil.circle.fill").resizable().frame(width: 56, height: 56)
+                    .foregroundColor(.blue).background(Color.white.clipShape(Circle())).shadow(radius: 4)
+            }.padding(24)
         }
         .sheet(item: Binding(get: { selectedID.map { IdentifiableID(id: $0) } }, set: { selectedID = $0?.id })) { idObj in
-            IDFilteredView(id: idObj.id, viewModel: viewModel)
+            NavigationStack {
+                List(viewModel.posts.filter { viewModel.extractID(from: $0.dateAndId) == idObj.id }) { p in
+                    PostRow(post: p, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { _ in })
+                }
+                .navigationTitle("ID:\(idObj.id)").toolbar { Button("閉じる") { selectedID = nil } }
+            }
         }
         .sheet(item: $targetRes) { post in
             VStack(alignment: .leading) {
                 Capsule().frame(width: 40, height: 6).foregroundColor(.secondary).padding(.top, 8).frame(maxWidth: .infinity)
-                PostRow(post: post, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { zoomImageURL = $0 })
-                    .padding()
+                PostRow(post: post, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { zoomImageURL = $0 }).padding()
                 Spacer()
             }.presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $isShowingPostView) { PostView(viewModel: viewModel, threadId: thread.id) }
         .fullScreenCover(item: Binding(get: { zoomImageURL.map { IdentifiableURL(url: $0) } }, set: { zoomImageURL = $0?.url })) { urlObj in
-            ZStack {
-                Color.black.ignoresSafeArea()
-                AsyncImage(url: urlObj.url) { i in i.resizable().aspectRatio(contentMode: .fit) } placeholder: { ProgressView() }
-            }
+            ZStack { Color.black.ignoresSafeArea(); AsyncImage(url: urlObj.url) { i in i.resizable().aspectRatio(contentMode: .fit) } placeholder: { ProgressView() } }
             .onTapGesture { zoomImageURL = nil }
         }
         .onAppear { Task { await viewModel.fetchPosts(datId: thread.id) } }
     }
 }
 
-// MARK: - Row Component
+// MARK: - PostRow
 struct PostRow: View {
     let post: Post
     let viewModel: BBSViewModel
     let onIDTap: (String) -> Void
     let onAnkaTap: (Int) -> Void
     let onImageTap: (URL) -> Void
-    
     var body: some View {
         let stats = viewModel.getIDStats(for: post)
         let idString = viewModel.extractID(from: post.dateAndId) ?? "???"
-        
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 4) {
                 Text("\(post.id)").bold().foregroundColor(.secondary)
@@ -237,14 +309,11 @@ struct PostRow: View {
                     }.font(.caption2).foregroundColor(.secondary)
                 }
             }.font(.caption)
-            
-            Text(post.attributedBody)
-                .font(.body).textSelection(.enabled).padding(.leading, 24)
+            Text(post.attributedBody).font(.body).textSelection(.enabled).padding(.leading, 24)
                 .environment(\.openURL, OpenURLAction { url in
                     if url.scheme == "anka", let num = Int(url.host ?? "") { onAnkaTap(num); return .handled }
                     return .systemAction
                 })
-            
             if !post.imageUrls.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
@@ -260,26 +329,44 @@ struct PostRow: View {
     }
 }
 
-// MARK: - Helpers
+// MARK: - PostView
+struct PostView: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var viewModel: BBSViewModel
+    let threadId: String
+    @State private var name = ""
+    @State private var mail = "sage"
+    @State private var bodyText = ""
+    @State private var isSending = false
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("名前 / メール") { TextField("名前", text: $name); TextField("メール", text: $mail) }
+                Section("本文") { TextEditor(text: $bodyText).frame(minHeight: 150) }
+            }
+            .navigationTitle("レスを書く").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("キャンセル") { dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    if isSending { ProgressView() } else {
+                        Button("書き込む") {
+                            Task { isSending = true; if await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText) { dismiss() }; isSending = false }
+                        }.disabled(bodyText.isEmpty)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Shared Helpers
+enum SortOption: String, CaseIterable { case ikioi = "勢い順", resCount = "レス数順", new = "新着順" }
 struct IdentifiableID: Identifiable { let id: String }
 struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
+extension Post: Identifiable {}
 extension Data {
     var sjisString: String? {
         let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
         return String(data: self, encoding: enc)
-    }
-}
-
-struct IDFilteredView: View {
-    let id: String
-    let viewModel: BBSViewModel
-    @Environment(\.dismiss) var dismiss
-    var body: some View {
-        NavigationStack {
-            List(viewModel.posts.filter { viewModel.extractID(from: $0.dateAndId) == id }) { p in
-                PostRow(post: p, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { _ in })
-            }
-            .navigationTitle("ID:\(id)").toolbar { Button("閉じる") { dismiss() } }
-        }
     }
 }
