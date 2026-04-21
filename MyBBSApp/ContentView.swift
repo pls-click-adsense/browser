@@ -1,9 +1,8 @@
 import SwiftUI
 import WebKit
 
-// MARK: - Constants (設定)
+// MARK: - Constants
 struct AppConfig {
-    // オリジナルUser-Agent。Safariやシステムと完全に独立したブラウザとして振る舞います。
     static let customUserAgent = "MyCustomBBSBrowser/1.0 (iPhone; iOS 17.0; SpecialEdition)"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
@@ -71,12 +70,11 @@ struct Post: Identifiable {
     }
 }
 
-// MARK: - WebView (クッキー保存対応)
+// MARK: - WebView
 struct WebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // default() を使うことでアプリを閉じてもクッキー（認証状態）が維持されます
         config.websiteDataStore = WKWebsiteDataStore.default()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = AppConfig.customUserAgent
@@ -150,25 +148,46 @@ class BBSViewModel: ObservableObject {
         isFetching = false
     }
     
-    func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
-        guard let url = URL(string: AppConfig.postURL) else { return false }
-        let params = ["bbs": "liveedge", "key": threadId, "time": String(Int(Date().timeIntervalSince1970)), "FROM": name, "mail": mail, "MESSAGE": body, "submit": "書き込む"]
-        let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-        let bodyString = params.compactMap { k, v in "\(k)=\(v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }.joined(separator: "&")
-        guard let bodyData = bodyString.data(using: sjis) else { return false }
+    func postReply(threadId: String, name: String, mail: String, body: String) async -> String {
+        guard let url = URL(string: AppConfig.postURL) else { return "URLエラー" }
+        
+        let params: [(String, String)] = [
+            ("submit", "書き込む"),
+            ("mail", mail),
+            ("FROM", name),
+            ("MESSAGE", body),
+            ("bbs", "liveedge"),
+            ("key", threadId)
+        ]
+        
+        let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+        let bodyString = params.compactMap { k, v in
+            guard let encodedValue = v.addingPercentEncoding(withAllowedCharacters: .alphanumerics) else { return nil }
+            return "\(k)=\(encodedValue)"
+        }.joined(separator: "&")
+        
+        guard let bodyData = bodyString.data(using: sjisEnc) else { return "エンコードエラー" }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.httpBody = bodyData
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(AppConfig.boardURL, forHTTPHeaderField: "Referer")
+        request.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
         request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
         
         do {
-            _ = try await URLSession.shared.data(for: request)
-            await fetchPosts(datId: threadId)
-            return true
-        } catch { return false }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let resText = data.sjisString ?? "解読不可"
+            
+            if resText.contains("書き込みました") || resText.contains("正常に受け付けられました") {
+                await fetchPosts(datId: threadId)
+                return "SUCCESS"
+            }
+            return "Status: \(status)\n\(resText)"
+        } catch {
+            return error.localizedDescription
+        }
     }
     
     func extractID(from str: String) -> String? {
@@ -283,6 +302,13 @@ struct ThreadDetailView: View {
         }
         .listStyle(.plain)
         .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
+                    if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                }
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             Button(action: { isShowingPostView = true }) {
                 Image(systemName: "pencil.circle.fill").resizable().frame(width: 56, height: 56)
@@ -359,9 +385,12 @@ struct PostView: View {
     @ObservedObject var viewModel: BBSViewModel
     let threadId: String
     @State private var name = ""
-    @State private var mail = "sage"
+    @State private var mail = "" // デフォルトを空文字に変更
     @State private var bodyText = ""
+    @State private var resultMessage: String? = nil
+    @State private var isShowingAlert = false
     @State private var isSending = false
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -374,10 +403,25 @@ struct PostView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if isSending { ProgressView() } else {
                         Button("書き込む") {
-                            Task { isSending = true; if await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText) { dismiss() }; isSending = false }
+                            Task {
+                                isSending = true
+                                let res = await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText)
+                                isSending = false
+                                if res == "SUCCESS" {
+                                    dismiss()
+                                } else {
+                                    resultMessage = res
+                                    isShowingAlert = true
+                                }
+                            }
                         }.disabled(bodyText.isEmpty)
                     }
                 }
+            }
+            .alert("書き込み結果", isPresented: $isShowingAlert) {
+                Button("OK") { }
+            } message: {
+                Text(resultMessage ?? "不明なエラー")
             }
         }
     }
