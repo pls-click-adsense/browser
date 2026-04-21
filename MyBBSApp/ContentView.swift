@@ -1,8 +1,9 @@
 import SwiftUI
 import WebKit
 
-// MARK: - Constants
+// MARK: - Constants (設定)
 struct AppConfig {
+    // オリジナルUser-Agent。Safariやシステムと完全に独立したブラウザとして振る舞います。
     static let customUserAgent = "MyCustomBBSBrowser/1.0 (iPhone; iOS 17.0; SpecialEdition)"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
@@ -70,12 +71,13 @@ struct Post: Identifiable {
     }
 }
 
-// MARK: - WebView
+// MARK: - WebView (クッキー保存対応)
 struct WebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+        // default() を使うことでアプリを閉じてもクッキー（認証状態）が維持されます
+        config.websiteDataStore = WKWebsiteDataStore.default()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = AppConfig.customUserAgent
         return webView
@@ -184,26 +186,41 @@ class BBSViewModel: ObservableObject {
         let totalCount = idCounts[id] ?? 0
         return (currentCount, totalCount)
     }
+
+    func clearWebData() async {
+        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+        let store = WKWebsiteDataStore.default()
+        await store.removeData(ofTypes: dataTypes, modifiedSince: Date(timeIntervalSince1970: 0))
+    }
 }
 
 // MARK: - Views
 struct ContentView: View {
     @StateObject var viewModel = BBSViewModel()
     @State private var isShowingBrowser = false
+    @State private var isShowingClearAlert = false
+    
     var body: some View {
         NavigationStack {
             List {
-                Section {
+                Section(header: Text("設定・認証")) {
                     Button(action: { isShowingBrowser = true }) {
                         HStack {
-                            Image(systemName: "shield.lefthalf.filled")
-                            Text("独立認証ブラウザ").font(.subheadline).bold()
+                            Image(systemName: "safari.fill")
+                            Text("独立認証ブラウザを開く").bold()
                             Spacer()
-                            Image(systemName: "arrow.up.forward.app")
+                            Image(systemName: "arrow.up.forward.app").font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                    Button(role: .destructive, action: { isShowingClearAlert = true }) {
+                        HStack {
+                            Image(systemName: "trash")
+                            Text("クッキー・キャッシュを削除")
                         }
                     }
                 }
-                Section {
+                
+                Section(header: Text("スレッド一覧")) {
                     ForEach(viewModel.threads) { t in
                         NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
                             VStack(alignment: .leading, spacing: 4) {
@@ -229,11 +246,17 @@ struct ContentView: View {
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
             }
+            .alert("データの削除", isPresented: $isShowingClearAlert) {
+                Button("削除する", role: .destructive) { Task { await viewModel.clearWebData() } }
+                Button("キャンセル", role: .cancel) {}
+            } message: {
+                Text("クッキーやキャッシュをすべて削除します。認証状態もリセットされます。")
+            }
             .sheet(isPresented: $isShowingBrowser) {
                 NavigationStack {
                     WebView(url: URL(string: AppConfig.boardURL)!)
                         .ignoresSafeArea(edges: .bottom)
-                        .navigationTitle("独立セッション").navigationBarTitleDisplayMode(.inline)
+                        .navigationTitle("認証セッション").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
                 }
             }
