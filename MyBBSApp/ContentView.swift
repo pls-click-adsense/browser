@@ -4,7 +4,9 @@ import SwiftUI
 struct Thread: Identifiable {
     let id: String
     let title: String
-    let resCount: String
+    let resCount: Int
+    let ikioi: Double
+    let createdAt: Double
 }
 
 struct Post: Identifiable {
@@ -14,42 +16,41 @@ struct Post: Identifiable {
     let dateAndId: String
     let body: String
     
-    // 安価リンクとテキストの装飾
+    // 安価リンク装飾
     var attributedBody: AttributedString {
         var attrString = AttributedString(body)
         let pattern = ">>(\\d+)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return attrString }
         let range = NSRange(body.startIndex..., in: body)
         let matches = regex.matches(in: body, options: [], range: range)
-        
         for match in matches.reversed() {
             guard let resRange = Range(match.range, in: attrString),
                   let numRange = Range(match.range(at: 1), in: body) else { continue }
-            let resNumber = body[numRange]
-            attrString[resRange].link = URL(string: "anka://\(resNumber)")
+            attrString[resRange].link = URL(string: "anka://\(body[numRange])")
             attrString[resRange].foregroundColor = .blue
+            attrString[resRange].underlineStyle = .single
         }
         return attrString
     }
     
-    // Imgurの画像URLを抽出
+    // Imgur画像抽出
     var imageUrls: [URL] {
         let pattern = "https?://(?:i\\.)?imgur\\.com/([a-zA-Z0-9]+)(?:\\.[a-z]+)?"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(body.startIndex..., in: body)
         let matches = regex.matches(in: body, options: [], range: range)
-        
         return matches.compactMap { match in
             guard let idRange = Range(match.range(at: 1), in: body) else { return nil }
-            let imageID = body[idRange]
-            // 直接画像ファイルを参照するために .jpg を付与して i.imgur.com に統一
-            return URL(string: "https://i.imgur.com/\(imageID).jpg")
+            return URL(string: "https://i.imgur.com/\(body[idRange]).jpg")
         }
     }
 }
 
-struct IdentifiableID: Identifiable { let id: String }
-struct ResNum: Identifiable { let id = UUID(); let num: Int }
+enum SortOption: String, CaseIterable {
+    case ikioi = "勢い順"
+    case resCount = "レス数順"
+    case new = "新着順"
+}
 
 // MARK: - ViewModel
 @MainActor
@@ -58,7 +59,9 @@ class BBSViewModel: ObservableObject {
     @Published var posts: [Post] = []
     @Published var idCounts: [String: Int] = [:]
     @Published var isFetching = false
+    @Published var sortOption: SortOption = .ikioi { didSet { applySort() } }
     
+    private var rawThreads: [Thread] = []
     let baseURL = "https://bbs.eddibb.cc/liveedge/"
     
     func fetchThreadList() async {
@@ -66,24 +69,32 @@ class BBSViewModel: ObservableObject {
         guard let url = URL(string: baseURL + "subject.txt") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let rawText = data.sjisString else { return }
-            let lines = rawText.components(separatedBy: .newlines)
-            self.threads = lines.compactMap { line in
+            guard let text = data.sjisString else { return }
+            let now = Date().timeIntervalSince1970
+            self.rawThreads = text.components(separatedBy: .newlines).compactMap { line in
                 let parts = line.components(separatedBy: "<>")
-                guard parts.count >= 2 else { return nil }
+                if parts.count < 2 { return nil }
                 let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
-                let titlePart = parts[1]
+                guard let timestamp = Double(datId) else { return nil }
                 let pattern = "(.*) \\((\\d+)\\)$"
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   let match = regex.firstMatch(in: titlePart, range: NSRange(titlePart.startIndex..., in: titlePart)) {
-                    let title = String(titlePart[Range(match.range(at: 1), in: titlePart)!])
-                    let count = String(titlePart[Range(match.range(at: 2), in: titlePart)!])
-                    return Thread(id: datId, title: title, resCount: count)
-                }
-                return Thread(id: datId, title: titlePart, resCount: "?")
+                let regex = try? NSRegularExpression(pattern: pattern)
+                let match = regex?.firstMatch(in: parts[1], range: NSRange(parts[1].startIndex..., in: parts[1]))
+                let title = match.map { String(parts[1][Range($0.range(at: 1), in: parts[1])!]) } ?? parts[1]
+                let count = match.map { Int(parts[1][Range($0.range(at: 2), in: parts[1])!]) ?? 0 } ?? 0
+                let hours = max((now - timestamp) / 3600, 0.1)
+                return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
             }
+            applySort()
         } catch { print(error) }
         isFetching = false
+    }
+    
+    func applySort() {
+        switch sortOption {
+        case .ikioi: threads = rawThreads.sorted { $0.ikioi > $1.ikioi }
+        case .resCount: threads = rawThreads.sorted { $0.resCount > $1.resCount }
+        case .new: threads = rawThreads.sorted { $0.createdAt > $1.createdAt }
+        }
     }
     
     func fetchPosts(datId: String) async {
@@ -91,19 +102,17 @@ class BBSViewModel: ObservableObject {
         guard let url = URL(string: baseURL + "dat/\(datId).dat") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let rawText = data.sjisString else { return }
-            let lines = rawText.components(separatedBy: .newlines)
-            let newPosts: [Post] = lines.enumerated().compactMap { index, line in
-                let parts = line.components(separatedBy: "<>")
-                guard parts.count >= 4 else { return nil }
-                let cleanName = parts[0].replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                let cleanBody = parts[3].replacingOccurrences(of: "<br>", with: "\n")
+            guard let text = data.sjisString else { return }
+            self.posts = text.components(separatedBy: .newlines).enumerated().compactMap { i, line in
+                let p = line.components(separatedBy: "<>")
+                if p.count < 4 { return nil }
+                let name = p[0].replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                let body = p[3].replacingOccurrences(of: "<br>", with: "\n")
                     .replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&amp;", with: "&")
-                return Post(id: index + 1, name: cleanName, mail: parts[1], dateAndId: parts[2], body: cleanBody)
+                return Post(id: i + 1, name: name, mail: p[1], dateAndId: p[2], body: body)
             }
-            self.posts = newPosts
             var counts: [String: Int] = [:]
-            for post in newPosts { if let id = extractID(from: post.dateAndId) { counts[id, default: 0] += 1 } }
+            for p in self.posts { if let id = extractID(from: p.dateAndId) { counts[id, default: 0] += 1 } }
             self.idCounts = counts
         } catch { print(error) }
         isFetching = false
@@ -112,79 +121,105 @@ class BBSViewModel: ObservableObject {
     func extractID(from str: String) -> String? {
         let pattern = "ID:([^\\s]+)"
         let regex = try? NSRegularExpression(pattern: pattern)
-        if let match = regex?.firstMatch(in: str, range: NSRange(str.startIndex..., in: str)) {
-            return String(str[Range(match.range(at: 1), in: str)!])
+        if let m = regex?.firstMatch(in: str, range: NSRange(str.startIndex..., in: str)) {
+            return String(str[Range(m.range(at: 1), in: str)!])
         }
         return nil
     }
     
-    func getIDStats(for post: Post) -> (current: Int, total: Int) {
-        guard let id = extractID(from: post.dateAndId) else { return (0, 0) }
-        return (posts.prefix(post.id).filter { extractID(from: $0.dateAndId) == id }.count, idCounts[id] ?? 0)
+    func getIDStats(for p: Post) -> (current: Int, total: Int) {
+        guard let id = extractID(from: p.dateAndId) else { return (0, 0) }
+        let total = idCounts[id] ?? 0
+        let current = posts.prefix(p.id).filter { extractID(from: $0.dateAndId) == id }.count
+        return (current, total)
     }
 }
 
-// MARK: - Views
+// MARK: - Main View
 struct ContentView: View {
     @StateObject var viewModel = BBSViewModel()
     var body: some View {
         NavigationStack {
-            List(viewModel.threads) { thread in
-                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: thread)) {
-                    HStack {
-                        Text(thread.title).lineLimit(1).font(.subheadline)
-                        Spacer()
-                        Text(thread.resCount).font(.caption).foregroundColor(.secondary)
-                    }
+            List(viewModel.threads) { t in
+                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(t.title).font(.subheadline).lineLimit(2).multilineTextAlignment(.leading)
+                        HStack {
+                            Text("res: \(t.resCount)").foregroundColor(.secondary)
+                            Text("勢い: \(Int(t.ikioi))").foregroundColor(.red)
+                            Spacer()
+                            Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
+                        }.font(.caption2)
+                    }.padding(.vertical, 2)
                 }
             }
             .navigationTitle("liveedge")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Picker("ソート", selection: $viewModel.sortOption) {
+                            ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                    } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
+                }
+            }
             .refreshable { await viewModel.fetchThreadList() }
             .onAppear { if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } } }
         }
     }
 }
 
+// MARK: - Detail View
 struct ThreadDetailView: View {
     @ObservedObject var viewModel: BBSViewModel
     let thread: Thread
     @State private var selectedID: String? = nil
-    @State private var targetResNumber: Int? = nil
+    @State private var targetRes: Post? = nil
+    @State private var zoomImageURL: URL? = nil
     
     var body: some View {
         List(viewModel.posts) { post in
-            PostRow(post: post, viewModel: viewModel, onIDTap: { selectedID = $0 }, onAnkaTap: { targetResNumber = $0 })
+            PostRow(post: post, viewModel: viewModel, 
+                    onIDTap: { selectedID = $0 }, 
+                    onAnkaTap: { num in targetRes = viewModel.posts.first { $0.id == num } },
+                    onImageTap: { zoomImageURL = $0 })
         }
         .listStyle(.plain)
         .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
-                    if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
-                }
+            Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
+                if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
             }
         }
-        .sheet(item: Binding(get: { selectedID.map { IdentifiableID(id: $0) } }, set: { selectedID = $0?.id })) { identID in
-            IDFilteredView(id: identID.id, viewModel: viewModel)
+        .sheet(item: Binding(get: { selectedID.map { IdentifiableID(id: $0) } }, set: { selectedID = $0?.id })) { idObj in
+            IDFilteredView(id: idObj.id, viewModel: viewModel)
         }
-        .popover(item: Binding(get: { targetResNumber.map { ResNum(num: $0) } }, set: { targetResNumber = $0?.num })) { resNum in
-            if let target = viewModel.posts.first(where: { $0.id == resNum.num }) {
-                ScrollView {
-                    PostRow(post: target, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in })
-                        .padding()
-                }
-                .presentationDetents([.medium])
+        .sheet(item: $targetRes) { post in
+            VStack(alignment: .leading) {
+                Capsule().frame(width: 40, height: 6).foregroundColor(.secondary).padding(.top, 8).frame(maxWidth: .infinity)
+                PostRow(post: post, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { zoomImageURL = $0 })
+                    .padding()
+                Spacer()
+            }.presentationDetents([.medium, .large])
+        }
+        .fullScreenCover(item: Binding(get: { zoomImageURL.map { IdentifiableURL(url: $0) } }, set: { zoomImageURL = $0?.url })) { urlObj in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                AsyncImage(url: urlObj.url) { i in i.resizable().aspectRatio(contentMode: .fit) } placeholder: { ProgressView() }
             }
+            .onTapGesture { zoomImageURL = nil }
         }
         .onAppear { Task { await viewModel.fetchPosts(datId: thread.id) } }
     }
 }
 
+// MARK: - Row Component
 struct PostRow: View {
     let post: Post
     let viewModel: BBSViewModel
     let onIDTap: (String) -> Void
     let onAnkaTap: (Int) -> Void
+    let onImageTap: (URL) -> Void
     
     var body: some View {
         let stats = viewModel.getIDStats(for: post)
@@ -199,45 +234,40 @@ struct PostRow: View {
                         Button(action: { onIDTap(idString) }) { Text("ID:\(idString)").underline() }.buttonStyle(.plain)
                         Text("(\(stats.current)/\(stats.total))").foregroundColor(stats.total >= 5 ? .red : .secondary)
                         Text(post.dateAndId.components(separatedBy: " ID:")[0])
-                    }
-                    .font(.caption2).foregroundColor(.secondary)
+                    }.font(.caption2).foregroundColor(.secondary)
                 }
-            }
-            .font(.caption)
+            }.font(.caption)
             
-            // 本文
             Text(post.attributedBody)
-                .font(.body)
-                .textSelection(.enabled)
-                .padding(.leading, 24)
+                .font(.body).textSelection(.enabled).padding(.leading, 24)
                 .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "anka", let num = Int(url.host ?? "") {
-                        onAnkaTap(num)
-                        return .handled
-                    }
+                    if url.scheme == "anka", let num = Int(url.host ?? "") { onAnkaTap(num); return .handled }
                     return .systemAction
                 })
             
-            // 画像サムネイル
             if !post.imageUrls.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
                         ForEach(post.imageUrls, id: \.self) { url in
-                            AsyncImage(url: url) { image in
-                                image.resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: 150, height: 150)
-                                    .cornerRadius(8)
-                            } placeholder: {
-                                ProgressView().frame(width: 150, height: 150)
-                            }
+                            Button(action: { onImageTap(url) }) {
+                                AsyncImage(url: url) { i in i.resizable().aspectRatio(contentMode: .fill).frame(width: 120, height: 120).cornerRadius(8) } placeholder: { ProgressView().frame(width: 120, height: 120) }
+                            }.buttonStyle(.plain)
                         }
-                    }
-                    .padding(.leading, 24)
+                    }.padding(.leading, 24)
                 }
             }
-        }
-        .padding(.vertical, 4)
+        }.padding(.vertical, 4)
+    }
+}
+
+// MARK: - Helpers
+struct IdentifiableID: Identifiable { let id: String }
+struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
+extension Post: Identifiable {}
+extension Data {
+    var sjisString: String? {
+        let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+        return String(data: self, encoding: enc)
     }
 }
 
@@ -247,19 +277,10 @@ struct IDFilteredView: View {
     @Environment(\.dismiss) var dismiss
     var body: some View {
         NavigationStack {
-            List(viewModel.posts.filter { viewModel.extractID(from: $0.dateAndId) == id }) { post in
-                PostRow(post: post, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in })
+            List(viewModel.posts.filter { viewModel.extractID(from: $0.dateAndId) == id }) { p in
+                PostRow(post: p, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { _ in })
             }
-            .navigationTitle("ID:\(id)").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("閉じる") { dismiss() } }
+            .navigationTitle("ID:\(id)").toolbar { Button("閉じる") { dismiss() } }
         }
-    }
-}
-
-// MARK: - Encoding Help
-extension Data {
-    var sjisString: String? {
-        let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-        return String(data: self, encoding: encoding)
     }
 }
