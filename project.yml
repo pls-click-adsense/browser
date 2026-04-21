@@ -1,15 +1,20 @@
 name: MyBBSApp
 options:
   bundleIdPrefix: com.yourname
+  deploymentTarget:
+    iOS: "16.0"
+
 targets:
   MyBBSApp:
     type: application
     platform: iOS
-    deploymentTarget: "16.0"
-    sources: [MyBBSApp]
+    sources:
+      - MyBBSApp
     settings:
-      # ここで署名を無効化する設定を入れておくと楽
+      # 署名なしビルドを許容する設定
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       ENTITLEMENTS_REQUIRED: false
+      # 開発用チームIDを空にする
+      DEVELOPMENT_TEAM: ""
