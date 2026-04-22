@@ -21,7 +21,7 @@ struct Post: Identifiable {
     let mail: String
     let dateAndId: String
     let body: String
-    var children: [Post]? = [] // ツリー構造用に必要
+    var referencedBy: [Int] = []
 }
 
 enum SortOption: String, CaseIterable { case ikioi = "🔥 勢い順", resCount = "📊 レス数順", new = "✨ 新着順" }
