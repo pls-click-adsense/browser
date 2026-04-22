@@ -7,21 +7,21 @@ class BBSViewModel: ObservableObject {
     @Published var posts: [Post] = []
     @Published var isFetching = false
     
-    // 簡易キャッシュ (ThreadID: Posts)
+    // --- 追加：ソート状態の保持 ---
+    @Published var sortOption: SortOption = .ikioi {
+        didSet {
+            applySort()
+        }
+    }
+    
     private var postCache: [String: [Post]] = [:]
 
-    // --- エラー修正：Webデータとキャッシュのクリア ---
     func clearWebData() async {
-        // メモリキャッシュを空にする
         postCache.removeAll()
         posts.removeAll()
-        
-        // WebViewのキャッシュやクッキーを物理的に削除
         let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         let dateFrom = Date(timeIntervalSince1970: 0)
         await WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: dateFrom)
-        
-        // リストを再取得
         await fetchThreadList()
     }
 
@@ -37,7 +37,7 @@ class BBSViewModel: ObservableObject {
             guard let text = String(data: data, encoding: sjis) else { return }
             
             let now = Date().timeIntervalSince1970
-            self.threads = text.components(separatedBy: .newlines).compactMap { line in
+            let newThreads = text.components(separatedBy: .newlines).compactMap { line -> Thread? in
                 let parts = line.components(separatedBy: "<>")
                 if parts.count < 2 { return nil }
                 let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
@@ -46,35 +46,47 @@ class BBSViewModel: ObservableObject {
                 let countStr = parts2.last?.replacingOccurrences(of: ")", with: "") ?? "0"
                 let title = parts2.dropLast().joined(separator: " (")
                 let count = Int(countStr) ?? 0
-                return Thread(id: datId, title: decodeHTML(title), resCount: count, ikioi: Double(count)/max((now-timestamp)/3600,0.1), createdAt: timestamp)
-            }.sorted { $0.ikioi > $1.ikioi }
+                return Thread(id: datId, title: decodeHTML(title), resCount: count, ikioi: Double(count)/max((now-timestamp)/3600, 0.1), createdAt: timestamp)
+            }
+            
+            self.threads = newThreads
+            applySort() // 取得後に現在の設定でソート
+            
         } catch { print(error) }
         isFetching = false
     }
 
+    // --- 追加：ソート実行ロジック ---
+    private func applySort() {
+        switch sortOption {
+        case .ikioi:
+            threads.sort { $0.ikioi > $1.ikioi }
+        case .new:
+            threads.sort { $0.createdAt > $1.createdAt }
+        case .resCount:
+            threads.sort { $0.resCount > $1.resCount }
+        }
+    }
+
+    // fetchPosts などの他のメソッドは前回のまま維持
     func fetchPosts(datId: String, useCache: Bool = false) async {
         if useCache, let cached = postCache[datId] {
             self.posts = cached
             return
         }
-        
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "dat/\(datId).dat") else { return }
         var req = URLRequest(url: url)
         req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
             guard let text = String(data: data, encoding: sjis) else { return }
-            
             var newPosts = text.components(separatedBy: .newlines).enumerated().compactMap { i, line -> Post? in
                 let p = line.components(separatedBy: "<>")
                 if p.count < 4 { return nil }
                 return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3])
             }
-            
-            // 被安価の計算ロジック
             for i in 0..<newPosts.count {
                 let body = newPosts[i].body
                 let pattern = ">>(\\d+)"
@@ -89,7 +101,6 @@ class BBSViewModel: ObservableObject {
                     }
                 }
             }
-            
             self.posts = newPosts
             self.postCache[datId] = newPosts
         } catch { print(error) }
@@ -106,7 +117,6 @@ class BBSViewModel: ObservableObject {
         req.httpBody = bodyStr.data(using: .ascii)
         req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             let text = String(data: data, encoding: sjis) ?? ""
