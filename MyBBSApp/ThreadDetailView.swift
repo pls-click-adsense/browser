@@ -11,7 +11,7 @@ struct ThreadDetailView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack {
+            ZStack(alignment: .bottomTrailing) { // 右下寄せ
                 List(viewModel.posts) { post in
                     PostRow(post: post, viewModel: viewModel,
                             onIDTap: { selectedID = $0 },
@@ -23,25 +23,23 @@ struct ThreadDetailView: View {
                 .listStyle(.plain)
                 .navigationTitle(thread.title)
                 
-                // フローティング操作ボタン
+                // フローティング操作ボタン群
                 VStack(spacing: 12) {
-                    Spacer()
-                    
-                    // リロード
+                    // 更新ボタン
                     Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
                         Image(systemName: "arrow.clockwise.circle.fill")
                             .resizable().frame(width: 44, height: 44)
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 最上部へ
+                    // 最上部
                     Button(action: { withAnimation { proxy.scrollTo(1, anchor: .top) } }) {
                         Image(systemName: "chevron.up.circle.fill")
                             .resizable().frame(width: 44, height: 44)
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 最下部へ
+                    // 最下部
                     Button(action: {
                         if let lastID = viewModel.posts.last?.id {
                             withAnimation { proxy.scrollTo(lastID, anchor: .bottom) }
@@ -52,7 +50,7 @@ struct ThreadDetailView: View {
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 書き込み
+                    // 書き込みボタン
                     Button(action: { isShowingPostView = true }) {
                         Image(systemName: "pencil.circle.fill")
                             .resizable().frame(width: 56, height: 56)
