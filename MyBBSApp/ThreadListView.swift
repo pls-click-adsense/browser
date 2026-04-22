@@ -35,7 +35,7 @@ struct ThreadListView: View {
     private var mainList: some View {
         List {
             ForEach(viewModel.threads) { thread in
-                NavigationLink(destination: ThreadDetailView(thread: thread, viewModel: viewModel)) {
+                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: thread)) {
                     ThreadRow(thread: thread)
                 }
                 .onAppear {
