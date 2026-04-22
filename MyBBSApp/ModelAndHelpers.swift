@@ -21,6 +21,7 @@ struct Post: Identifiable {
     let mail: String
     let dateAndId: String
     let body: String
+    var children: [Post]? = [] // ツリー構造用に必要
 }
 
 enum SortOption: String, CaseIterable { case ikioi = "🔥 勢い順", resCount = "📊 レス数順", new = "✨ 新着順" }
@@ -84,11 +85,9 @@ struct PostRow: View {
                     }.font(.caption2).foregroundColor(.secondary)
                 }
             }.font(.caption)
+            
             Text(post.attributedBody).font(.body).textSelection(.enabled).padding(.leading, 24)
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "anka", let num = Int(url.host ?? "") { onAnkaTap(num); return .handled }
-                    return .systemAction
-                })
+            
             if !post.imageUrls.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
@@ -107,13 +106,14 @@ struct PostRow: View {
 // Postの拡張
 extension Post {
     var attributedBody: AttributedString {
-        let cleanBody = decodeHTMLEntities(body)
+        let cleanBody: String = decodeHTMLEntities(body)
         var attrString = AttributedString(cleanBody)
+        let range = NSRange(cleanBody.startIndex..., in: cleanBody)
         
         // --- 1. アンカー (>>1) の処理 ---
         let ankaPattern = ">>(\\d+)"
         if let regex = try? NSRegularExpression(pattern: ankaPattern) {
-            let matches = regex.matches(in: cleanBody, options: [], range: NSRange(cleanBody.startIndex..., in: cleanBody))
+            let matches = regex.matches(in: cleanBody, options: [], range: range)
             for match in matches.reversed() {
                 guard let resRange = Range(match.range, in: attrString),
                       let numRange = Range(match.range(at: 1), in: cleanBody) else { continue }
@@ -125,22 +125,19 @@ extension Post {
         // --- 2. 一般URL (http/https) の処理 ---
         let urlPattern = "https?://[a-zA-Z0-9\\-\\.\\/\\?\\:\\@\\&\\=\\%\\#\\_\\!\\~\\*\\'\\(\\)\\,\\+]+"
         if let regex = try? NSRegularExpression(pattern: urlPattern) {
-            let matches = regex.matches(in: cleanBody, options: [], range: NSRange(cleanBody.startIndex..., in: cleanBody))
+            let matches = regex.matches(in: cleanBody, options: [], range: range)
             for match in matches.reversed() {
                 guard let resRange = Range(match.range, in: attrString),
                       let urlRange = Range(match.range, in: cleanBody),
                       let url = URL(string: String(cleanBody[urlRange])) else { continue }
-                // Imgurなどの画像URL以外をリンク化したい場合はここでフィルタも可能だが、
-                // 基本全部リンクにしておいた方が便利。
                 attrString[resRange].link = url
                 attrString[resRange].foregroundColor = .blue
                 attrString[resRange].underlineStyle = .single
             }
         }
-        
         return attrString
     }
-}
+    
     var imageUrls: [URL] {
         let pattern = "https?://(?:i\\.)?imgur\\.com/([a-zA-Z0-9]+)(?:\\.[a-z]+)?"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
