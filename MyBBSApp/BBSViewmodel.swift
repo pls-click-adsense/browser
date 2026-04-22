@@ -10,6 +10,21 @@ class BBSViewModel: ObservableObject {
     // 簡易キャッシュ (ThreadID: Posts)
     private var postCache: [String: [Post]] = [:]
 
+    // --- エラー修正：Webデータとキャッシュのクリア ---
+    func clearWebData() async {
+        // メモリキャッシュを空にする
+        postCache.removeAll()
+        posts.removeAll()
+        
+        // WebViewのキャッシュやクッキーを物理的に削除
+        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+        let dateFrom = Date(timeIntervalSince1970: 0)
+        await WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: dateFrom)
+        
+        // リストを再取得
+        await fetchThreadList()
+    }
+
     func fetchThreadList() async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
@@ -59,7 +74,7 @@ class BBSViewModel: ObservableObject {
                 return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3])
             }
             
-            // 被安価の計算
+            // 被安価の計算ロジック
             for i in 0..<newPosts.count {
                 let body = newPosts[i].body
                 let pattern = ">>(\\d+)"
@@ -69,7 +84,7 @@ class BBSViewModel: ObservableObject {
                         if let range = Range(match.range(at: 1), in: body),
                            let targetNum = Int(body[range]),
                            targetNum > 0 && targetNum <= newPosts.count {
-                            newPosts[targetNum - 1].replacedBy(newPosts[i].id)
+                            newPosts[targetNum - 1].addReply(from: newPosts[i].id)
                         }
                     }
                 }
@@ -100,16 +115,4 @@ class BBSViewModel: ObservableObject {
     }
 
     func extractID(from str: String) -> String? { str.components(separatedBy: "ID:").last?.trimmingCharacters(in: .whitespaces) }
-    func getIDStats(for p: Post) -> (current: Int, total: Int) {
-        guard let id = extractID(from: p.dateAndId) else { return (1, 1) }
-        let allIDs = posts.compactMap { extractID(from: $0.dateAndId) }
-        return (allIDs.prefix(p.id).filter{$0==id}.count, allIDs.filter{$0==id}.count)
-    }
-}
-
-// 被安価追加用
-extension Post {
-    mutating func replacedBy(_ num: Int) {
-        if !repliedBy.contains(num) { repliedBy.append(num); repliedBy.sort() }
-    }
 }
