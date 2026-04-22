@@ -6,36 +6,61 @@ class BBSViewModel: ObservableObject {
     @Published var threads: [Thread] = []
     @Published var posts: [Post] = []
     @Published var isFetching = false
-    @Published var isLoadingMore = false // 追加読み込み中フラグ
-    
+    @Published var isLoadingMore = false
     @Published var sortOption: SortOption = .ikioi {
         didSet { applySort() }
     }
     
     private var postCache: [String: [Post]] = [:]
 
-    // --- Webデータ削除（ワンクッション後に実行される） ---
+    // 1. ID抽出メソッド（ModelAndHelpersから呼ばれる）
+    func extractID(from str: String) -> String? {
+        str.components(separatedBy: "ID:").last?.trimmingCharacters(in: .whitespaces)
+    }
+
+    // 2. 書き込みメソッド（PostViewから呼ばれる）
+    func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
+        guard let url = URL(string: AppConfig.postURL) else { return false }
+        let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue))))
+        
+        func escape(_ s: String) -> String {
+            s.data(using: sjis)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
+        }
+        
+        let bodyStr = "bbs=liveedge&key=\(threadId)&FROM=\(escape(name))&mail=\(escape(mail))&MESSAGE=\(escape(body))&submit=\(escape("書き込む"))"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = bodyStr.data(using: .ascii)
+        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let text = String(data: data, encoding: sjis) ?? ""
+            return text.contains("書き込みました") || text.contains("正常に")
+        } catch {
+            return false
+        }
+    }
+
+    // --- 以降、既存のメソッド ---
     func clearWebData() async {
         postCache.removeAll()
         posts.removeAll()
         let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
-        let dateFrom = Date(timeIntervalSince1970: 0)
-        await WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: dateFrom)
+        await WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: .distantPast)
         await fetchThreadList()
     }
 
-    // --- スレッド一覧取得 ---
     func fetchThreadList() async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        
         do {
             let (data, _) = try await URLSession.shared.data(for: req)
             let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
             guard let text = String(data: data, encoding: sjis) else { return }
-            
             let now = Date().timeIntervalSince1970
             let newThreads = text.components(separatedBy: .newlines).compactMap { line -> Thread? in
                 let parts = line.components(separatedBy: "<>")
@@ -54,14 +79,10 @@ class BBSViewModel: ObservableObject {
         isFetching = false
     }
 
-    // --- 上に引っ張って追加読み込み（の演出とロジック） ---
     func loadMoreThreadsIfNeeded(currentThread: Thread) async {
         guard threads.last?.id == currentThread.id, !isLoadingMore else { return }
-        
         isLoadingMore = true
-        // 板の仕様上、subject.txtは一括取得だけど、演出として少し待機
-        try? await Task.sleep(nanoseconds: 500_000_000) 
-        // 実際に追加データがあるAPIならここで append する
+        try? await Task.sleep(nanoseconds: 500_000_000)
         isLoadingMore = false
     }
 
@@ -73,7 +94,6 @@ class BBSViewModel: ObservableObject {
         }
     }
 
-    // レス取得
     func fetchPosts(datId: String, useCache: Bool = false) async {
         if useCache, let cached = postCache[datId] {
             self.posts = cached
