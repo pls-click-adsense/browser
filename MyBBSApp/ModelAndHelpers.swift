@@ -15,7 +15,6 @@ struct Thread: Identifiable {
     let createdAt: Double
 }
 
-// HTML実体参照・絵文字をデコードする関数
 func decodeHTML(_ text: String) -> String {
     var decoded = text
         .replacingOccurrences(of: "&gt;", with: ">")
@@ -26,7 +25,6 @@ func decodeHTML(_ text: String) -> String {
         .replacingOccurrences(of: "&nbsp;", with: " ")
         .replacingOccurrences(of: "<br>", with: "\n")
 
-    // 10進数実体参照 (&#12345;) の処理
     let decimalPattern = "&#(\\d+);"
     if let regex = try? NSRegularExpression(pattern: decimalPattern) {
         let matches = regex.matches(in: decoded, range: NSRange(decoded.startIndex..., in: decoded))
@@ -40,7 +38,6 @@ func decodeHTML(_ text: String) -> String {
         }
     }
     
-    // 16進数実体参照 (&#x...;) の処理
     let hexPattern = "&#x([0-9a-fA-F]+);"
     if let hexRegex = try? NSRegularExpression(pattern: hexPattern) {
         let hexMatches = hexRegex.matches(in: decoded, range: NSRange(decoded.startIndex..., in: decoded))
@@ -66,25 +63,53 @@ struct Post: Identifiable {
     var attributedBody: AttributedString {
         let cleanBody = decodeHTML(body)
         var attrString = AttributedString(cleanBody)
-        let pattern = ">>(\\d+)"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return attrString }
-        let matches = regex.matches(in: cleanBody, options: [], range: NSRange(cleanBody.startIndex..., in: cleanBody))
-        for match in matches.reversed() {
-            guard let resRange = Range(match.range, in: attrString),
-                  let numRange = Range(match.range(at: 1), in: cleanBody) else { continue }
-            attrString[resRange].link = URL(string: "anka://\(cleanBody[numRange])")
-            attrString[resRange].foregroundColor = .blue
+        
+        // 1. 通常のURL (http...) をハイパーリンク化
+        let urlPattern = #"(https?://[^\s<>]+)"#
+        if let urlRegex = try? NSRegularExpression(pattern: urlPattern) {
+            let urlMatches = urlRegex.matches(in: cleanBody, range: NSRange(cleanBody.startIndex..., in: cleanBody))
+            for match in urlMatches.reversed() {
+                if let range = Range(match.range, in: attrString),
+                   let urlRange = Range(match.range, in: cleanBody),
+                   let url = URL(string: String(cleanBody[urlRange])) {
+                    attrString[range].link = url
+                    attrString[range].foregroundColor = .blue
+                }
+            }
+        }
+
+        // 2. アンカー (>>1) をハイパーリンク化 (URLより優先)
+        let ankaPattern = ">>(\\d+)"
+        if let ankaRegex = try? NSRegularExpression(pattern: ankaPattern) {
+            let ankaMatches = ankaRegex.matches(in: cleanBody, range: NSRange(cleanBody.startIndex..., in: cleanBody))
+            for match in ankaMatches.reversed() {
+                if let range = Range(match.range, in: attrString),
+                   let numRange = Range(match.range(at: 1), in: cleanBody) {
+                    attrString[range].link = URL(string: "anka://\(cleanBody[numRange])")
+                    attrString[range].foregroundColor = .blue
+                }
+            }
         }
         return attrString
     }
 
     var imageUrls: [URL] {
-        let pattern = "https?://(?:i\\.)?imgur\\.com/([a-zA-Z0-9]+)(?:\\.[a-z]+)?"
+        let pattern = #"(https?://(?:pbs\.twimg\.com/media/[a-zA-Z0-9_-]+|i\.imgur\.com/[a-zA-Z0-9]+)(?:\.[a-z]+)?)"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let matches = regex.matches(in: body, options: [], range: NSRange(body.startIndex..., in: body))
         return matches.compactMap { match in
-            guard let idRange = Range(match.range(at: 1), in: body) else { return nil }
-            return URL(string: "https://i.imgur.com/\(body[idRange]).jpg")
+            guard let range = Range(match.range, in: body) else { return nil }
+            return URL(string: String(body[range]))
+        }
+    }
+
+    var videoUrls: [URL] {
+        let pattern = #"(https?://video\.twimg\.com/[a-zA-Z0-9._/-]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let matches = regex.matches(in: body, options: [], range: NSRange(body.startIndex..., in: body))
+        return matches.compactMap { match in
+            guard let range = Range(match.range, in: body) else { return nil }
+            return URL(string: String(body[range]))
         }
     }
 }
@@ -149,6 +174,18 @@ struct PostRow: View {
                             }.buttonStyle(.plain)
                         }
                     }
+                }
+            }
+
+            if !post.videoUrls.isEmpty {
+                ForEach(post.videoUrls, id: \.self) { url in
+                    Button(action: { onURLTap(url) }) {
+                        HStack {
+                            Image(systemName: "play.rectangle.fill")
+                            Text("Twitter動画を開く").font(.caption).bold()
+                        }
+                        .padding(8).background(Color.blue.opacity(0.1)).cornerRadius(8)
+                    }.buttonStyle(.plain)
                 }
             }
         }
