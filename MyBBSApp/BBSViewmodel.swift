@@ -83,4 +83,28 @@ class BBSViewModel: ObservableObject {
         let currentIdx = (allWithID.firstIndex(where: { $0.id == post.id }) ?? 0) + 1
         return (currentIdx, allWithID.count)
     }
+    // BBSViewmodel.swift の中に追加
+func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
+    guard let url = URL(string: AppConfig.postURL) else { return false }
+    
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+    request.setValue(AppConfig.boardURL, forHTTPHeaderField: "Referer")
+    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    
+    let now = Int(Date().timeIntervalSince1970)
+    let bodyString = "bbs=liveedge&key=\(threadId)&time=\(now)&FROM=\(name)&mail=\(mail)&MESSAGE=\(body)&submit=書き込む"
+    
+    // SJISエンコード（5ch/BBS.cgi仕様）
+    let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+    request.httpBody = bodyString.data(using: sjisEnc, allowLossyConversion: true)
+    
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        return (response as? HTTPURLResponse)?.statusCode == 200
+    } catch {
+        return false
+    }
+  }
 }
