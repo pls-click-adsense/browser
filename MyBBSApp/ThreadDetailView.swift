@@ -11,63 +11,40 @@ struct ThreadDetailView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: viewModel.isRightAligned ? .bottomTrailing : .bottomLeading) { 
-                List(viewModel.posts) { post in
-                    PostRow(post: post, viewModel: viewModel,
-                            onIDTap: { selectedID = $0 },
-                            onAnkaTap: { targetAnka = $0 },
-                            onImageTap: { zoomImageURL = $0 },
-                            onURLTap: { webURL = IdentifiableURL(url: $0) })
-                    .id(post.id)
-                }
-                .listStyle(.plain)
-                .navigationTitle(thread.title)
-                
-                // フローティング操作ボタン群
-                VStack(spacing: 12) {
-                    // 配置切り替えボタン
-                    Button(action: { withAnimation { viewModel.isRightAligned.toggle() } }) {
-                        Image(systemName: viewModel.isRightAligned ? "arrow.left.square.fill" : "arrow.right.square.fill")
-                            .resizable().frame(width: 44, height: 44)
-                            .foregroundColor(.orange).background(Color.white.clipShape(Circle()))
-                    }
-
-                    // 更新
-                    Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
-                        Image(systemName: "arrow.clockwise.circle.fill")
-                            .resizable().frame(width: 44, height: 44)
-                            .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
-                    }
-                    
-                    // 上
+            List(viewModel.posts) { post in
+                PostRow(post: post, viewModel: viewModel,
+                        onIDTap: { selectedID = $0 },
+                        onAnkaTap: { targetAnka = $0 },
+                        onImageTap: { zoomImageURL = $0 },
+                        onURLTap: { webURL = (IdentifiableURL(url: $0)) })
+                .id(post.id)
+            }
+            .listStyle(.plain)
+            .refreshable { await viewModel.fetchPosts(datId: thread.id) } // 下に引っ張ってリロード
+            .safeAreaInset(edge: .bottom) { // 下部固定メニュー
+                HStack(spacing: 20) {
                     Button(action: { withAnimation { proxy.scrollTo(1, anchor: .top) } }) {
                         Image(systemName: "chevron.up.circle.fill")
-                            .resizable().frame(width: 44, height: 44)
-                            .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
-                    
-                    // 下
+                    Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                    }
+                    Button(action: { isShowingPostView = true }) {
+                        Image(systemName: "pencil.circle.fill").font(.largeTitle)
+                    }
                     Button(action: {
-                        if let lastID = viewModel.posts.last?.id {
-                            withAnimation { proxy.scrollTo(lastID, anchor: .bottom) }
-                        }
+                        if let last = viewModel.posts.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
                     }) {
                         Image(systemName: "chevron.down.circle.fill")
-                            .resizable().frame(width: 44, height: 44)
-                            .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
-                    }
-                    
-                    // 書き込み
-                    Button(action: { isShowingPostView = true }) {
-                        Image(systemName: "pencil.circle.fill")
-                            .resizable().frame(width: 56, height: 56)
-                            .foregroundColor(.blue).background(Color.white.clipShape(Circle())).shadow(radius: 4)
                     }
                 }
-                .padding(viewModel.isRightAligned ? .trailing : .leading, 16)
-                .padding(.bottom, 24)
+                .font(.title2).padding(.vertical, 8).frame(maxWidth: .infinity)
+                .background(.ultraThinMaterial) // 透ける素材でカッコよく
             }
+            .navigationTitle(thread.title)
+            .onAppear { Task { await viewModel.fetchPosts(datId: thread.id, useCache: true) } }
         }
+        // ... (以下、sheetやfullScreenCoverのコードは前回と同じ)
         .sheet(item: Binding(get: { selectedID.map { IdentifiableID(id: $0) } }, set: { selectedID = $0?.id })) { idObj in
             NavigationStack {
                 List(viewModel.posts.filter { viewModel.extractID(from: $0.dateAndId) == idObj.id }) { p in
@@ -81,16 +58,10 @@ struct ThreadDetailView: View {
             }
         }
         .sheet(isPresented: $isShowingPostView) { PostView(viewModel: viewModel, threadId: thread.id) }
-        .sheet(item: $webURL) { item in 
-            NavigationStack {
-                WebView(url: item.url)
-                    .toolbar { Button("閉じる") { webURL = nil } }
-            }
-        }
+        .sheet(item: $webURL) { item in NavigationStack { WebView(url: item.url).toolbar { Button("閉じる") { webURL = nil } } } }
         .fullScreenCover(item: Binding(get: { zoomImageURL.map { IdentifiableURL(url: $0) } }, set: { zoomImageURL = $0?.url })) { item in
             ZStack { Color.black.ignoresSafeArea(); AsyncImage(url: item.url) { i in i.resizable().aspectRatio(contentMode: .fit) } placeholder: { ProgressView() } }
             .onTapGesture { zoomImageURL = nil }
         }
-        .onAppear { Task { await viewModel.fetchPosts(datId: thread.id) } }
     }
 }
