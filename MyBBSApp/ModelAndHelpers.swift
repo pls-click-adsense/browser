@@ -21,12 +21,13 @@ struct Post: Identifiable {
     let mail: String
     let dateAndId: String
     let body: String
-    var referencedBy: [Int] = []
+    var referencedBy: [Int] = [] // 自分へのレス番号リスト
 }
 
 enum SortOption: String, CaseIterable { case ikioi = "🔥 勢い順", resCount = "📊 レス数順", new = "✨ 新着順" }
 struct IdentifiableID: Identifiable { let id: String }
 struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
+struct IdentifiableResList: Identifiable { let id = UUID(); let ids: [Int] } // 追加
 
 func decodeHTMLEntities(_ text: String) -> String {
     var decoded = text
@@ -55,7 +56,6 @@ extension Data {
     }
 }
 
-// 部品たち
 struct WebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
@@ -64,53 +64,12 @@ struct WebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) { uiView.load(URLRequest(url: url)) }
 }
 
-struct PostRow: View {
-    let post: Post
-    let viewModel: BBSViewModel
-    let onIDTap: (String) -> Void
-    let onAnkaTap: (Int) -> Void
-    let onImageTap: (URL) -> Void
-    var body: some View {
-        let stats = viewModel.getIDStats(for: post)
-        let idString = viewModel.extractID(from: post.dateAndId) ?? "???"
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                Text("\(post.id)").bold().foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(post.name).foregroundColor(.green).bold()
-                    HStack {
-                        Button(action: { onIDTap(idString) }) { Text("ID:\(idString)").underline() }.buttonStyle(.plain)
-                        Text("(\(stats.current)/\(stats.total))").foregroundColor(stats.total >= 5 ? .red : .secondary)
-                        Text(post.dateAndId.components(separatedBy: " ID:")[0])
-                    }.font(.caption2).foregroundColor(.secondary)
-                }
-            }.font(.caption)
-            
-            Text(post.attributedBody).font(.body).textSelection(.enabled).padding(.leading, 24)
-            
-            if !post.imageUrls.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(post.imageUrls, id: \.self) { url in
-                            Button(action: { onImageTap(url) }) {
-                                AsyncImage(url: url) { i in i.resizable().aspectRatio(contentMode: .fill).frame(width: 120, height: 120).cornerRadius(8) } placeholder: { ProgressView().frame(width: 120, height: 120) }
-                            }.buttonStyle(.plain)
-                        }
-                    }.padding(.leading, 24)
-                }
-            }
-        }
-    }
-}
-
-// Postの拡張
 extension Post {
     var attributedBody: AttributedString {
         let cleanBody: String = decodeHTMLEntities(body)
         var attrString = AttributedString(cleanBody)
         let range = NSRange(cleanBody.startIndex..., in: cleanBody)
         
-        // --- 1. アンカー (>>1) の処理 ---
         let ankaPattern = ">>(\\d+)"
         if let regex = try? NSRegularExpression(pattern: ankaPattern) {
             let matches = regex.matches(in: cleanBody, options: [], range: range)
@@ -122,7 +81,6 @@ extension Post {
             }
         }
         
-        // --- 2. 一般URL (http/https) の処理 ---
         let urlPattern = "https?://[a-zA-Z0-9\\-\\.\\/\\?\\:\\@\\&\\=\\%\\#\\_\\!\\~\\*\\'\\(\\)\\,\\+]+"
         if let regex = try? NSRegularExpression(pattern: urlPattern) {
             let matches = regex.matches(in: cleanBody, options: [], range: range)
