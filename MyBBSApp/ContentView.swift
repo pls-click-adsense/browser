@@ -8,6 +8,27 @@ struct AppConfig {
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
 }
 
+// MARK: - HTML Decoder (Common)
+func decodeHTMLEntities(_ text: String) -> String {
+    var decoded = text
+        .replacingOccurrences(of: "&gt;", with: ">")
+        .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&amp;", with: "&")
+        .replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&#39;", with: "'")
+    let pattern = "&#(\\d+);"
+    let regex = try? NSRegularExpression(pattern: pattern)
+    let matches = regex?.matches(in: decoded, options: [], range: NSRange(decoded.startIndex..., in: decoded)) ?? []
+    for match in matches.reversed() {
+        if let codeRange = Range(match.range(at: 1), in: decoded),
+           let codePoint = UInt32(decoded[codeRange]),
+           let scalar = UnicodeScalar(codePoint) {
+            decoded.replaceSubrange(Range(match.range, in: decoded)!, with: String(scalar))
+        }
+    }
+    return decoded
+}
+
 // MARK: - Models
 struct Thread: Identifiable {
     let id: String
@@ -24,26 +45,6 @@ struct Post: Identifiable {
     let dateAndId: String
     let body: String
     
-    func decodeHTMLEntities(_ text: String) -> String {
-        var decoded = text
-            .replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&quot;", with: "\"")
-            .replacingOccurrences(of: "&#39;", with: "'")
-        let pattern = "&#(\\d+);"
-        let regex = try? NSRegularExpression(pattern: pattern)
-        let matches = regex?.matches(in: decoded, options: [], range: NSRange(decoded.startIndex..., in: decoded)) ?? []
-        for match in matches.reversed() {
-            if let codeRange = Range(match.range(at: 1), in: decoded),
-               let codePoint = UInt32(decoded[codeRange]),
-               let scalar = UnicodeScalar(codePoint) {
-                decoded.replaceSubrange(Range(match.range, in: decoded)!, with: String(scalar))
-            }
-        }
-        return decoded
-    }
-
     var attributedBody: AttributedString {
         let cleanBody = decodeHTMLEntities(body)
         var attrString = AttributedString(cleanBody)
@@ -74,9 +75,7 @@ struct Post: Identifiable {
 struct WebView: UIViewRepresentable {
     let url: URL
     func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = WKWebsiteDataStore.default()
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = WKWebView()
         webView.customUserAgent = AppConfig.customUserAgent
         return webView
     }
@@ -108,9 +107,15 @@ class BBSViewModel: ObservableObject {
                 if parts.count < 2 { return nil }
                 let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
                 guard let timestamp = Double(datId) else { return nil }
-                let titleParts = parts[1].components(separatedBy: " (")
-                let countStr = titleParts.last?.replacingOccurrences(of: ")", with: "") ?? "0"
-                let title = titleParts.dropLast().joined(separator: " (")
+                
+                let titleLine = parts[1]
+                let parts2 = titleLine.components(separatedBy: " (")
+                let countStr = parts2.last?.replacingOccurrences(of: ")", with: "") ?? "0"
+                let rawTitle = parts2.dropLast().joined(separator: " (")
+                
+                // スレタイのHTML実体参照（絵文字など）をデコード
+                let title = decodeHTMLEntities(rawTitle)
+                
                 let count = Int(countStr) ?? 0
                 let hours = max((now - timestamp) / 3600, 0.1)
                 return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
@@ -148,39 +153,29 @@ class BBSViewModel: ObservableObject {
         isFetching = false
     }
     
-    func postReply(threadId: String, name: String, mail: String, body: String) async -> String {
-        guard let url = URL(string: AppConfig.postURL) else { return "URL Error" }
-        func sjisPercentEncode(_ str: String) -> String {
-            let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-            guard let data = str.data(using: sjisEnc) else { return "" }
-            return data.map { String(format: "%%%02X", $0) }.joined()
+    func postReply(threadId: String, name: String, mail: String, body: String) async -> (isSuccess: Bool, message: String) {
+        guard let url = URL(string: AppConfig.postURL) else { return (false, "URL Error") }
+        func sjisEnc(_ str: String) -> String {
+            let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+            return str.data(using: enc)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
         }
-        let params: [(String, String)] = [
-            ("bbs", "liveedge"),
-            ("key", threadId),
-            ("FROM", name),
-            ("mail", mail),
-            ("MESSAGE", body),
-            ("submit", "書き込む")
-        ]
-        let bodyString = params.map { "\($0)=\(sjisPercentEncode($1))" }.joined(separator: "&")
-        guard let bodyData = bodyString.data(using: .ascii) else { return "Data Error" }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.httpBody = bodyData
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
-        request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        let params = [("bbs","liveedge"),("key",threadId),("FROM",name),("mail",mail),("MESSAGE",body),("submit","書き込む")]
+        let bodyStr = params.map { "\($0)=\(sjisEnc($1))" }.joined(separator: "&")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = bodyStr.data(using: .ascii)
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
+        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let resText = data.sjisString ?? "解読不可"
-            if resText.contains("書き込みました") || resText.contains("正常に受け付けられました") {
+            let (data, res) = try await URLSession.shared.data(for: req)
+            let text = data.sjisString ?? ""
+            if text.contains("書き込みました") || text.contains("正常に") {
                 await fetchPosts(datId: threadId)
-                return "SUCCESS"
+                return (true, text)
             }
-            return "Status: \(status)\n\(resText)"
-        } catch { return error.localizedDescription }
+            return (false, "Status: \((res as? HTTPURLResponse)?.statusCode ?? 0)\n\(text)")
+        } catch { return (false, error.localizedDescription) }
     }
     
     func extractID(from str: String) -> String? {
@@ -195,14 +190,12 @@ class BBSViewModel: ObservableObject {
     func getIDStats(for p: Post) -> (current: Int, total: Int) {
         guard let id = extractID(from: p.dateAndId) else { return (1, 1) }
         let currentCount = posts.prefix(p.id).filter { extractID(from: $0.dateAndId) == id }.count
-        let totalCount = idCounts[id] ?? 0
-        return (currentCount, totalCount)
+        return (currentCount, idCounts[id] ?? 0)
     }
 
     func clearWebData() async {
-        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         let store = WKWebsiteDataStore.default()
-        await store.removeData(ofTypes: dataTypes, modifiedSince: Date(timeIntervalSince1970: 0))
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0))
     }
 }
 
@@ -215,49 +208,33 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("🛠 設定・認証")) {
+                Section("🛠 設定・認証") {
                     Button(action: { isShowingBrowser = true }) {
-                        HStack {
-                            Image(systemName: "safari.fill")
-                            Text("独立認証ブラウザを開く").bold()
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app").font(.caption).foregroundColor(.secondary)
-                        }
+                        Label("独立認証ブラウザを開く", systemImage: "safari.fill").bold()
                     }
                     Button(role: .destructive, action: { isShowingClearAlert = true }) {
-                        HStack {
-                            Image(systemName: "trash")
-                            Text("キャッシュ・Cookie全削除")
-                        }
+                        Label("キャッシュ・Cookie削除", systemImage: "trash")
                     }
                 }
-                
-                Section(header: Text("📜 スレッド一覧")) {
+                Section("📜 スレッド一覧") {
                     ForEach(viewModel.threads) { t in
                         NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("💬 \(t.title)")
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                    .lineLimit(2)
-                                HStack(spacing: 12) {
-                                    Label("\(t.resCount)", systemImage: "bubble.right")
-                                    Label("\(Int(t.ikioi))", systemImage: "bolt.fill")
-                                        .foregroundColor(t.ikioi > 500 ? .red : .orange)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(t.title).font(.subheadline).fontWeight(.medium).lineLimit(2)
+                                HStack {
+                                    Label("\(t.resCount)", systemImage: "bubble.right").foregroundColor(.secondary)
+                                    Label("\(Int(t.ikioi))", systemImage: "bolt.fill").foregroundColor(t.ikioi > 500 ? .red : .orange)
                                     Spacer()
-                                    Text("🕒 \(Date(timeIntervalSince1970: t.createdAt), style: .time)")
-                                }
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            }
-                            .padding(.vertical, 2)
+                                    Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
+                                }.font(.caption2)
+                            }.padding(.vertical, 2)
                         }
                     }
                 }
             }
             .navigationTitle("liveedge")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Picker("ソート", selection: $viewModel.sortOption) {
                             ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -265,18 +242,15 @@ struct ContentView: View {
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
             }
-            .alert("データの削除", isPresented: $isShowingClearAlert) {
-                Button("削除する", role: .destructive) { Task { await viewModel.clearWebData() } }
+            .alert("削除確認", isPresented: $isShowingClearAlert) {
+                Button("削除", role: .destructive) { Task { await viewModel.clearWebData() } }
                 Button("キャンセル", role: .cancel) {}
-            } message: {
-                Text("Cookieを削除すると忍法帖などの認証がリセットされます。よろしいですか？")
-            }
+            } message: { Text("認証情報をリセットしますか？") }
             .sheet(isPresented: $isShowingBrowser) {
                 NavigationStack {
                     WebView(url: URL(string: AppConfig.boardURL)!)
-                        .ignoresSafeArea(edges: .bottom)
                         .navigationTitle("認証用ブラウザ").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
+                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
                 }
             }
             .refreshable { await viewModel.fetchThreadList() }
@@ -303,7 +277,7 @@ struct ThreadDetailView: View {
         .listStyle(.plain)
         .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
                     if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
                 }
@@ -324,11 +298,11 @@ struct ThreadDetailView: View {
             }
         }
         .sheet(item: $targetRes) { post in
-            VStack(alignment: .leading) {
-                Capsule().frame(width: 40, height: 6).foregroundColor(.secondary).padding(.top, 8).frame(maxWidth: .infinity)
+            VStack {
+                Capsule().frame(width: 40, height: 6).foregroundColor(.secondary).padding(.top, 8)
                 PostRow(post: post, viewModel: viewModel, onIDTap: { _ in }, onAnkaTap: { _ in }, onImageTap: { zoomImageURL = $0 }).padding()
                 Spacer()
-            }.presentationDetents([.medium, .large])
+            }.presentationDetents([.medium])
         }
         .sheet(isPresented: $isShowingPostView) { PostView(viewModel: viewModel, threadId: thread.id) }
         .fullScreenCover(item: Binding(get: { zoomImageURL.map { IdentifiableURL(url: $0) } }, set: { zoomImageURL = $0?.url })) { urlObj in
@@ -349,7 +323,7 @@ struct PostRow: View {
         let stats = viewModel.getIDStats(for: post)
         let idString = viewModel.extractID(from: post.dateAndId) ?? "???"
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 4) {
+            HStack(alignment: .top) {
                 Text("\(post.id)").bold().foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(post.name).foregroundColor(.green).bold()
@@ -376,7 +350,7 @@ struct PostRow: View {
                     }.padding(.leading, 24)
                 }
             }
-        }.padding(.vertical, 4)
+        }
     }
 }
 
@@ -388,7 +362,7 @@ struct PostView: View {
     @State private var mail = ""
     @State private var bodyText = ""
     @State private var resultMessage: String? = nil
-    @State private var isShowingAlert = false
+    @State private var isShowingError = false
     @State private var isSending = false
     var body: some View {
         NavigationStack {
@@ -398,21 +372,22 @@ struct PostView: View {
             }
             .navigationTitle("レスを書く").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("キャンセル") { dismiss() } }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarLeading) { Button("キャンセル") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
                     if isSending { ProgressView() } else {
                         Button("書き込む") {
                             Task {
                                 isSending = true
                                 let res = await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText)
                                 isSending = false
-                                if res == "SUCCESS" { dismiss() } else { resultMessage = res; isShowingAlert = true }
+                                if res.isSuccess { name = ""; mail = ""; bodyText = ""; dismiss() }
+                                else { resultMessage = res.message; isShowingError = true }
                             }
                         }.disabled(bodyText.isEmpty)
                     }
                 }
             }
-            .alert("書き込み結果", isPresented: $isShowingAlert) { Button("OK") { } } message: { Text(resultMessage ?? "") }
+            .alert("エラー", isPresented: $isShowingError) { Button("OK"){} } message: { Text(resultMessage ?? "") }
         }
     }
 }
