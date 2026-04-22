@@ -11,7 +11,7 @@ struct ThreadDetailView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) { // 右下寄せ
+            ZStack(alignment: viewModel.isRightAligned ? .bottomTrailing : .bottomLeading) { 
                 List(viewModel.posts) { post in
                     PostRow(post: post, viewModel: viewModel,
                             onIDTap: { selectedID = $0 },
@@ -25,21 +25,28 @@ struct ThreadDetailView: View {
                 
                 // フローティング操作ボタン群
                 VStack(spacing: 12) {
-                    // 更新ボタン
+                    // 配置切り替えボタン
+                    Button(action: { withAnimation { viewModel.isRightAligned.toggle() } }) {
+                        Image(systemName: viewModel.isRightAligned ? "arrow.left.square.fill" : "arrow.right.square.fill")
+                            .resizable().frame(width: 44, height: 44)
+                            .foregroundColor(.orange).background(Color.white.clipShape(Circle()))
+                    }
+
+                    // 更新
                     Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
                         Image(systemName: "arrow.clockwise.circle.fill")
                             .resizable().frame(width: 44, height: 44)
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 最上部
+                    // 上
                     Button(action: { withAnimation { proxy.scrollTo(1, anchor: .top) } }) {
                         Image(systemName: "chevron.up.circle.fill")
                             .resizable().frame(width: 44, height: 44)
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 最下部
+                    // 下
                     Button(action: {
                         if let lastID = viewModel.posts.last?.id {
                             withAnimation { proxy.scrollTo(lastID, anchor: .bottom) }
@@ -50,14 +57,14 @@ struct ThreadDetailView: View {
                             .foregroundColor(.gray).background(Color.white.clipShape(Circle()))
                     }
                     
-                    // 書き込みボタン
+                    // 書き込み
                     Button(action: { isShowingPostView = true }) {
                         Image(systemName: "pencil.circle.fill")
                             .resizable().frame(width: 56, height: 56)
                             .foregroundColor(.blue).background(Color.white.clipShape(Circle())).shadow(radius: 4)
                     }
                 }
-                .padding(.trailing, 16)
+                .padding(viewModel.isRightAligned ? .trailing : .leading, 16)
                 .padding(.bottom, 24)
             }
         }
