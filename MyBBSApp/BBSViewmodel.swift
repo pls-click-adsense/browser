@@ -1,110 +1,109 @@
-import Foundation
+import SwiftUI
+import WebKit
 
 @MainActor
 class BBSViewModel: ObservableObject {
     @Published var threads: [Thread] = []
     @Published var posts: [Post] = []
     @Published var isFetching = false
+    @Published var sortOption: SortOption = .ikioi { didSet { applySort() } }
     
-    func fetchThreads() async {
+    private var rawThreads: [Thread] = []
+    
+    func fetchThreadList() async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
+        var req = URLRequest(url: url)
+        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let content = data.sjisString {
-                self.threads = parseThreads(content)
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+            guard let text = String(data: data, encoding: sjis) else { return }
+            
+            let now = Date().timeIntervalSince1970
+            self.rawThreads = text.components(separatedBy: .newlines).compactMap { line in
+                let parts = line.components(separatedBy: "<>")
+                if parts.count < 2 { return nil }
+                let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
+                guard let timestamp = Double(datId) else { return nil }
+                let parts2 = parts[1].components(separatedBy: " (")
+                let countStr = parts2.last?.replacingOccurrences(of: ")", with: "") ?? "0"
+                let title = parts2.dropLast().joined(separator: " (")
+                let count = Int(countStr) ?? 0
+                let hours = max((now - timestamp) / 3600, 0.1)
+                return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
             }
+            applySort()
         } catch { print(error) }
         isFetching = false
+    }
+    
+    func applySort() {
+        switch sortOption {
+        case .ikioi: threads = rawThreads.sorted { $0.ikioi > $1.ikioi }
+        case .resCount: threads = rawThreads.sorted { $0.resCount > $1.resCount }
+        case .new: threads = rawThreads.sorted { $0.createdAt > $1.createdAt }
+        }
     }
     
     func fetchPosts(datId: String) async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "dat/\(datId).dat") else { return }
+        var req = URLRequest(url: url)
+        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let content = data.sjisString {
-                let rawPosts = parsePosts(content)
-                self.posts = analyzeReferences(for: rawPosts)
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+            guard let text = String(data: data, encoding: sjis) else { return }
+            self.posts = text.components(separatedBy: .newlines).enumerated().compactMap { i, line in
+                let p = line.components(separatedBy: "<>")
+                if p.count < 4 { return nil }
+                return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3].replacingOccurrences(of: "<br>", with: "\n"))
             }
         } catch { print(error) }
         isFetching = false
     }
-    
-    private func analyzeReferences(for rawPosts: [Post]) -> [Post] {
-        var updated = rawPosts
-        let regex = try? NSRegularExpression(pattern: ">>(\\d+)")
-        
-        for post in rawPosts {
-            let nsBody = post.body as NSString
-            let matches = regex?.matches(in: post.body, range: NSRange(location: 0, length: nsBody.length)) ?? []
-            for m in matches {
-                if let r = Range(m.range(at: 1), in: post.body), let targetId = Int(post.body[r]) {
-                    if let idx = updated.firstIndex(where: { $0.id == targetId }) {
-                        updated[idx].referencedBy.append(post.id)
-                    }
-                }
+
+    func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
+        guard let url = URL(string: AppConfig.postURL) else { return false }
+        let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+        func escape(_ s: String) -> String {
+            s.data(using: sjis)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
+        }
+        let bodyStr = "bbs=liveedge&key=\(threadId)&FROM=\(escape(name))&mail=\(escape(mail))&MESSAGE=\(escape(body))&submit=\(escape("書き込む"))"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.httpBody = bodyStr.data(using: .ascii)
+        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let text = String(data: data, encoding: sjis) ?? ""
+            if text.contains("書き込みました") || text.contains("正常に") {
+                await fetchPosts(datId: threadId)
+                return true
             }
-        }
-        return updated
-    }
-    
-    private func parseThreads(_ content: String) -> [Thread] {
-        content.components(separatedBy: "\n").compactMap { line in
-            let parts = line.components(separatedBy: "<>")
-            guard parts.count >= 2, let datId = parts[0].components(separatedBy: ".").first else { return nil }
-            let titleAndCount = parts[1]
-            let countPattern = "\\((\\d+)\\)$"
-            let regex = try? NSRegularExpression(pattern: countPattern)
-            let nsString = titleAndCount as NSString
-            let match = regex?.firstMatch(in: titleAndCount, range: NSRange(location: 0, length: nsString.length))
-            let count = match.map { Int(nsString.substring(with: $0.range(at: 1))) ?? 0 } ?? 0
-            let title = regex?.stringByReplacingMatches(in: titleAndCount, range: NSRange(location: 0, length: nsString.length), withTemplate: "").trimmingCharacters(in: .whitespaces) ?? titleAndCount
-            return Thread(id: datId, title: title, resCount: count, ikioi: 0, createdAt: Double(datId) ?? 0)
-        }
-    }
-    
-    private func parsePosts(_ content: String) -> [Post] {
-        content.components(separatedBy: "\n").enumerated().compactMap { (index, line) in
-            let parts = line.components(separatedBy: "<>")
-            guard parts.count >= 4 else { return nil }
-            return Post(id: index + 1, name: parts[0], mail: parts[1], dateAndId: parts[2], body: parts[3])
-        }
-    }
-    
-    func extractID(from dateAndId: String) -> String? {
-        let parts = dateAndId.components(separatedBy: " ID:")
-        return parts.count > 1 ? parts[1] : nil
-    }
-    
-    func getIDStats(for post: Post) -> (current: Int, total: Int) {
-        let id = extractID(from: post.dateAndId) ?? ""
-        let allWithID = posts.filter { extractID(from: $0.dateAndId) == id }
-        let currentIdx = (allWithID.firstIndex(where: { $0.id == post.id }) ?? 0) + 1
-        return (currentIdx, allWithID.count)
-    }
-    // BBSViewmodel.swift の中に追加
-func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
-    guard let url = URL(string: AppConfig.postURL) else { return false }
-    
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-    request.setValue(AppConfig.boardURL, forHTTPHeaderField: "Referer")
-    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-    
-    let now = Int(Date().timeIntervalSince1970)
-    let bodyString = "bbs=liveedge&key=\(threadId)&time=\(now)&FROM=\(name)&mail=\(mail)&MESSAGE=\(body)&submit=書き込む"
-    
-    // SJISエンコード（5ch/BBS.cgi仕様）
-    let sjisEnc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-    request.httpBody = bodyString.data(using: sjisEnc, allowLossyConversion: true)
-    
-    do {
-        let (_, response) = try await URLSession.shared.data(for: request)
-        return (response as? HTTPURLResponse)?.statusCode == 200
-    } catch {
+        } catch { print(error) }
         return false
     }
-  }
+
+    func extractID(from str: String) -> String? {
+        str.components(separatedBy: "ID:").last?.trimmingCharacters(in: .whitespaces)
+    }
+
+    func getIDStats(for p: Post) -> (current: Int, total: Int) {
+        guard let id = extractID(from: p.dateAndId) else { return (1, 1) }
+        let allIDs = posts.compactMap { extractID(from: $0.dateAndId) }
+        let total = allIDs.filter { $0 == id }.count
+        let current = allIDs.prefix(p.id).filter { $0 == id }.count
+        return (current, total)
+    }
+
+    func clearWebData() async {
+        let store = WKWebsiteDataStore.default()
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0))
+    }
 }
