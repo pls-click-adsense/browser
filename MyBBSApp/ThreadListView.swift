@@ -4,6 +4,7 @@ struct ThreadListView: View {
     @StateObject var viewModel = BBSViewModel()
     @State private var searchText = ""
     @State private var sortOption: SortOption = .ikioi
+    @State private var webURL: IdentifiableURL? = nil // ブラウザ用
     
     var filteredThreads: [Thread] {
         let list = searchText.isEmpty ? viewModel.threads : viewModel.threads.filter { $0.title.contains(searchText) }
@@ -32,6 +33,18 @@ struct ThreadListView: View {
             .navigationTitle("エッジ板")
             .searchable(text: $searchText, prompt: "スレタイ検索")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack {
+                        // 内部ブラウザボタン
+                        Button(action: { webURL = IdentifiableURL(url: URL(string: AppConfig.boardURL)!) }) {
+                            Image(systemName: "safari")
+                        }
+                        // クッキー削除ボタン
+                        Button(action: { deleteCookies() }) {
+                            Image(systemName: "trash")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Picker("ソート", selection: $sortOption) {
@@ -40,7 +53,21 @@ struct ThreadListView: View {
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
             }
+            .sheet(item: $webURL) { item in
+                NavigationStack {
+                    WebView(url: item.url)
+                        .navigationTitle("ブラウザ")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { Button("閉じる") { webURL = nil } }
+                }
+            }
             .onAppear { Task { await viewModel.fetchThreads() } }
         }
+    }
+    
+    func deleteCookies() {
+        let storage = HTTPCookieStorage.shared
+        storage.cookies?.forEach { storage.deleteCookie($0) }
+        print("Cookies deleted")
     }
 }
