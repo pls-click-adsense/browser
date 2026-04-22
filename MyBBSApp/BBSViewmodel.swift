@@ -8,6 +8,9 @@ class BBSViewModel: ObservableObject {
     @Published var isFetching = false
     @Published var sortOption: SortOption = .ikioi { didSet { applySort() } }
     
+    // 操作ボタンの配置（右か左か）
+    @AppStorage("button_alignment_right") var isRightAligned: Bool = true
+    
     private var rawThreads: [Thread] = []
     
     func fetchThreadList() async {
