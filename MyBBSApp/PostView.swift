@@ -34,7 +34,7 @@ struct PostView: View {
                                 let success = await viewModel.postReply(threadId: threadId, name: name, mail: mail, body: bodyText)
                                 if success {
                                     dismiss()
-                                    // 閉じた後に親画面を更新
+                                    // 送信成功後に更新
                                     await viewModel.fetchPosts(datId: threadId)
                                 } else {
                                     showError = true
