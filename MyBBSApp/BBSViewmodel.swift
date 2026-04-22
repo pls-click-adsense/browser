@@ -68,30 +68,65 @@ class BBSViewModel: ObservableObject {
     }
     
     func postReply(threadId: String, name: String, mail: String, body: String) async -> (isSuccess: Bool, message: String) {
-        guard let url = URL(string: AppConfig.postURL) else { return (false, "URL Error") }
-        func sjisEnc(_ str: String) -> String {
-            let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-            return str.data(using: enc)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
-        }
-        let params = [("bbs","liveedge"),("key",threadId),("FROM",name),("mail",mail),("MESSAGE",body),("submit","書き込む")]
-        let bodyStr = params.map { "\($0)=\(sjisEnc($1))" }.joined(separator: "&")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = bodyStr.data(using: .ascii)
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        req.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
-        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        do {
-            let (data, res) = try await URLSession.shared.data(for: req)
-            let status = (res as? HTTPURLResponse)?.statusCode ?? 0
-            let text = data.sjisString ?? ""
-            if status == 200 && (text.contains("書き込みました") || text.contains("正常に")) {
-                await fetchPosts(datId: threadId)
-                return (true, "")
+    guard let url = URL(string: AppConfig.postURL) else { return (false, "URL Error") }
+    
+    // 絵文字などのSJIS外文字を数値文字参照（&#...;）に置換する関数
+    func encodeForBBS(_ str: String) -> String {
+        return str.unicodeScalars.reduce("") { result, scalar in
+            if scalar.value <= 0x80 || (0xFF61...0xFF9F).contains(scalar.value) {
+                // 基本文字や半角カナはそのまま（後でSJIS変換するため）
+                return result + String(scalar)
+            } else if String(scalar).data(using: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))) != nil {
+                // SJISで表現可能な漢字などもそのまま
+                return result + String(scalar)
+            } else {
+                // 絵文字などは数値文字参照に変換
+                return result + "&#\(scalar.value);"
             }
-            return (false, "Status: \(status)\n\(text)")
-        } catch { return (false, error.localizedDescription) }
+        }
     }
+    
+    func sjisEnc(_ str: String) -> String {
+        let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
+        // ここでencodeForBBSを通してからSJISパーセントエンコードする
+        let safeStr = encodeForBBS(str)
+        return safeStr.data(using: enc)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
+    }
+    
+    // FROMやMESSAGEにencodeForBBSを適用
+    let params = [
+        ("bbs", "liveedge"),
+        ("key", threadId),
+        ("FROM", name),
+        ("mail", mail),
+        ("MESSAGE", body),
+        ("submit", "書き込む")
+    ]
+    
+    let bodyStr = params.map { "\($0)=\(sjisEnc($1))" }.joined(separator: "&")
+    
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.httpBody = bodyStr.data(using: .ascii)
+    req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    req.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
+    req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
+    
+    do {
+        let (data, res) = try await URLSession.shared.data(for: req)
+        let status = (res as? HTTPURLResponse)?.statusCode ?? 0
+        
+        if status == 200 {
+            await fetchPosts(datId: threadId)
+            return (true, "")
+        }
+        
+        let text = data.sjisString ?? "Unknown Error"
+        return (false, "Status: \(status)\n\(text)")
+    } catch {
+        return (false, error.localizedDescription)
+    }
+}
     
     func extractID(from str: String) -> String? {
         let pattern = "ID:([^\\s]+)"
