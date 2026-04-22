@@ -6,16 +6,15 @@ class BBSViewModel: ObservableObject {
     @Published var threads: [Thread] = []
     @Published var posts: [Post] = []
     @Published var isFetching = false
+    @Published var isLoadingMore = false // 追加読み込み中フラグ
     
-    // --- 追加：ソート状態の保持 ---
     @Published var sortOption: SortOption = .ikioi {
-        didSet {
-            applySort()
-        }
+        didSet { applySort() }
     }
     
     private var postCache: [String: [Post]] = [:]
 
+    // --- Webデータ削除（ワンクッション後に実行される） ---
     func clearWebData() async {
         postCache.removeAll()
         posts.removeAll()
@@ -25,6 +24,7 @@ class BBSViewModel: ObservableObject {
         await fetchThreadList()
     }
 
+    // --- スレッド一覧取得 ---
     func fetchThreadList() async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
@@ -48,27 +48,32 @@ class BBSViewModel: ObservableObject {
                 let count = Int(countStr) ?? 0
                 return Thread(id: datId, title: decodeHTML(title), resCount: count, ikioi: Double(count)/max((now-timestamp)/3600, 0.1), createdAt: timestamp)
             }
-            
             self.threads = newThreads
-            applySort() // 取得後に現在の設定でソート
-            
+            applySort()
         } catch { print(error) }
         isFetching = false
     }
 
-    // --- 追加：ソート実行ロジック ---
+    // --- 上に引っ張って追加読み込み（の演出とロジック） ---
+    func loadMoreThreadsIfNeeded(currentThread: Thread) async {
+        guard threads.last?.id == currentThread.id, !isLoadingMore else { return }
+        
+        isLoadingMore = true
+        // 板の仕様上、subject.txtは一括取得だけど、演出として少し待機
+        try? await Task.sleep(nanoseconds: 500_000_000) 
+        // 実際に追加データがあるAPIならここで append する
+        isLoadingMore = false
+    }
+
     private func applySort() {
         switch sortOption {
-        case .ikioi:
-            threads.sort { $0.ikioi > $1.ikioi }
-        case .new:
-            threads.sort { $0.createdAt > $1.createdAt }
-        case .resCount:
-            threads.sort { $0.resCount > $1.resCount }
+        case .ikioi: threads.sort { $0.ikioi > $1.ikioi }
+        case .new: threads.sort { $0.createdAt > $1.createdAt }
+        case .resCount: threads.sort { $0.resCount > $1.resCount }
         }
     }
 
-    // fetchPosts などの他のメソッドは前回のまま維持
+    // レス取得
     func fetchPosts(datId: String, useCache: Bool = false) async {
         if useCache, let cached = postCache[datId] {
             self.posts = cached
@@ -87,42 +92,9 @@ class BBSViewModel: ObservableObject {
                 if p.count < 4 { return nil }
                 return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3])
             }
-            for i in 0..<newPosts.count {
-                let body = newPosts[i].body
-                let pattern = ">>(\\d+)"
-                if let regex = try? NSRegularExpression(pattern: pattern) {
-                    let matches = regex.matches(in: body, range: NSRange(body.startIndex..., in: body))
-                    for match in matches {
-                        if let range = Range(match.range(at: 1), in: body),
-                           let targetNum = Int(body[range]),
-                           targetNum > 0 && targetNum <= newPosts.count {
-                            newPosts[targetNum - 1].addReply(from: newPosts[i].id)
-                        }
-                    }
-                }
-            }
             self.posts = newPosts
             self.postCache[datId] = newPosts
         } catch { print(error) }
         isFetching = false
     }
-
-    func postReply(threadId: String, name: String, mail: String, body: String) async -> Bool {
-        guard let url = URL(string: AppConfig.postURL) else { return false }
-        let sjis = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-        func escape(_ s: String) -> String { s.data(using: sjis)?.map { String(format: "%%%02X", $0) }.joined() ?? "" }
-        let bodyStr = "bbs=liveedge&key=\(threadId)&FROM=\(escape(name))&mail=\(escape(mail))&MESSAGE=\(escape(body))&submit=\(escape("書き込む"))"
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = bodyStr.data(using: .ascii)
-        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            let text = String(data: data, encoding: sjis) ?? ""
-            return text.contains("書き込みました") || text.contains("正常に")
-        } catch { return false }
-    }
-
-    func extractID(from str: String) -> String? { str.components(separatedBy: "ID:").last?.trimmingCharacters(in: .whitespaces) }
 }
