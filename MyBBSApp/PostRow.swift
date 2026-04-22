@@ -6,13 +6,15 @@ struct PostRow: View {
     let onIDTap: (String) -> Void
     let onAnkaTap: (Int) -> Void
     let onImageTap: (URL) -> Void
-    let onRefTap: ([Int]) -> Void // 被安価（レス返信）用
-    
+    let onRefTap: ([Int]) -> Void
+    let onURLTap: (URL) -> Void // 内部ブラウザで開くためのコールバック
+
     var body: some View {
         let stats = viewModel.getIDStats(for: post)
         let idString = viewModel.extractID(from: post.dateAndId) ?? "???"
         
         VStack(alignment: .leading, spacing: 8) {
+            // ヘッダー部分（レス番号、名前、被安価数、ID、日付）
             HStack(alignment: .top) {
                 Text("\(post.id)").bold().foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
@@ -44,20 +46,23 @@ struct PostRow: View {
                 }
             }.font(.caption)
             
-            // 本文
+            // 本文（アンカーとURLのリンク処理）
             Text(post.attributedBody)
                 .font(.body)
                 .textSelection(.enabled)
                 .padding(.leading, 24)
                 .environment(\.openURL, OpenURLAction { url in
+                    // アンカーリンク (anka://番号) の場合
                     if url.scheme == "anka", let num = Int(url.host ?? "") {
                         onAnkaTap(num)
                         return .handled
                     }
-                    return .systemAction
+                    // 普通のURLの場合は内部ブラウザに投げる
+                    onURLTap(url)
+                    return .handled
                 })
             
-            // Imgurなどの画像
+            // Imgurなどの画像プレビュー
             if !post.imageUrls.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
