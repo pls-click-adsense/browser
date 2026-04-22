@@ -2,9 +2,14 @@ import SwiftUI
 import WebKit
 
 struct AppConfig {
-    static let customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    // 板のトップURL（末尾のスラッシュは付けておくのが無難）
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
+    
+    // 書き込み用CGI
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
+    
+    // 指定のUA
+    static let customUserAgent = "Monazilla/1.00 (AbeShinzo/1.0.0)"
 }
 
 struct Thread: Identifiable {
