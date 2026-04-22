@@ -1,12 +1,33 @@
 import SwiftUI
 import WebKit
 
+// --- 設定・共通構造体 ---
 struct AppConfig {
     static let customUserAgent = "AbeShinzo/1.0.0"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
 }
 
+// 汎用的なID・URLラッパー（エラーの主因）
+struct IdentifiableID: Identifiable { let id: String }
+struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
+
+enum SortOption: String, CaseIterable { 
+    case ikioi = "🔥 勢い", resCount = "📊 レス数", new = "✨ 新着" 
+}
+
+// 共通WebView（エラーの主因）
+struct WebView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> WKWebView {
+        let v = WKWebView()
+        v.customUserAgent = AppConfig.customUserAgent
+        return v
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) { uiView.load(URLRequest(url: url)) }
+}
+
+// --- スレッド・レスのモデル ---
 struct Thread: Identifiable {
     let id: String
     let title: String
@@ -46,7 +67,7 @@ struct Post: Identifiable {
     let mail: String
     let dateAndId: String
     let body: String
-    var repliedBy: [Int] = [] // 被安価（このレスに向けられたレス番号）
+    var repliedBy: [Int] = [] 
     
     var attributedBody: AttributedString {
         let cleanBody = decodeHTML(body)
@@ -86,8 +107,13 @@ struct Post: Identifiable {
             return URL(string: String(body[range]))
         }
     }
+    
+    mutating func addReply(from num: Int) {
+        if !repliedBy.contains(num) { repliedBy.append(num); repliedBy.sort() }
+    }
 }
 
+// --- 表示コンポーネント ---
 struct PostRow: View {
     let post: Post
     let viewModel: BBSViewModel
@@ -127,7 +153,6 @@ struct PostRow: View {
                 }
             }
             
-            // 被安価の表示
             if !post.repliedBy.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "arrowshape.turn.up.left.fill")
