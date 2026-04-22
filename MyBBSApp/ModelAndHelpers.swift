@@ -15,15 +15,45 @@ struct Thread: Identifiable {
     let createdAt: Double
 }
 
-// HTMLエンティティをデコードする関数
+// HTML実体参照・絵文字をデコードする関数
 func decodeHTML(_ text: String) -> String {
-    return text
+    var decoded = text
         .replacingOccurrences(of: "&gt;", with: ">")
         .replacingOccurrences(of: "&lt;", with: "<")
         .replacingOccurrences(of: "&amp;", with: "&")
         .replacingOccurrences(of: "&quot;", with: "\"")
         .replacingOccurrences(of: "&#39;", with: "'")
+        .replacingOccurrences(of: "&nbsp;", with: " ")
         .replacingOccurrences(of: "<br>", with: "\n")
+
+    // 10進数実体参照 (&#12345;) の処理
+    let decimalPattern = "&#(\\d+);"
+    if let regex = try? NSRegularExpression(pattern: decimalPattern) {
+        let matches = regex.matches(in: decoded, range: NSRange(decoded.startIndex..., in: decoded))
+        for match in matches.reversed() {
+            if let range = Range(match.range, in: decoded),
+               let codeRange = Range(match.range(at: 1), in: decoded),
+               let codePoint = UInt32(decoded[codeRange]),
+               let scalar = UnicodeScalar(codePoint) {
+                decoded.replaceSubrange(range, with: String(scalar))
+            }
+        }
+    }
+    
+    // 16進数実体参照 (&#x...;) の処理
+    let hexPattern = "&#x([0-9a-fA-F]+);"
+    if let hexRegex = try? NSRegularExpression(pattern: hexPattern) {
+        let hexMatches = hexRegex.matches(in: decoded, range: NSRange(decoded.startIndex..., in: decoded))
+        for match in hexMatches.reversed() {
+            if let range = Range(match.range, in: decoded),
+               let codeRange = Range(match.range(at: 1), in: decoded),
+               let codePoint = UInt32(decoded[codeRange], radix: 16),
+               let scalar = UnicodeScalar(codePoint) {
+                decoded.replaceSubrange(range, with: String(scalar))
+            }
+        }
+    }
+    return decoded
 }
 
 struct Post: Identifiable {
