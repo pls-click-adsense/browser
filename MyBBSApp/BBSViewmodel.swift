@@ -12,39 +12,44 @@ class BBSViewModel: ObservableObject {
     private var rawThreads: [Thread] = []
     
     // --- ツリー構造の構築 ---
-    func buildTree(from allPosts: [Post]) -> [Post] {
-        var postMap = [Int: Post]()
-        var rootPosts = [Post]()
+    // BBSViewmodel.swift の該当箇所を修正
+func buildTree(from allPosts: [Post]) -> [Post] {
+    var postMap = [Int: Post]()
+    var rootPosts = [Post]()
+    
+    // 1. 全ポストをIDでマップ化
+    for post in allPosts {
+        var p = post
+        p.children = [] 
+        postMap[post.id] = p
+    }
+    
+    // 2. 本文からアンカー(>>10)を抽出して親子関係を作る
+    for post in allPosts {
+        let pattern = ">>(\\d+)"
+        let regex = try? NSRegularExpression(pattern: pattern)
+        let nsBody = post.body as NSString
+        let match = regex?.firstMatch(in: post.body, range: NSRange(location: 0, length: nsBody.length))
         
-        // 1. 全ポストをIDでマップ化
-        for post in allPosts {
-            var p = post
-            p.children = [] // 初期化
-            postMap[post.id] = p
-        }
-        
-        // 2. 本文からアンカー(>>10)を抽出して親子関係を作る
-        for post in allPosts {
-            let pattern = ">>(\\d+)"
-            let regex = try? NSRegularExpression(pattern: pattern)
-            let nsBody = post.body as NSString
-            let match = regex?.firstMatch(in: post.body, range: NSRange(location: 0, length: nsBody.length))
+        if let match = match, 
+           let range = Range(match.range(at: 1), in: post.body),
+           let parentId = Int(post.body[range]),
+           parentId < post.id,
+           postMap[parentId] != nil {
             
-            if let match = match, 
-               let range = Range(match.range(at: 1), in: post.body),
-               let parentId = Int(post.body[range]),
-               parentId < post.id, // 自分より前のレスへのアンカーのみ
-               postMap[parentId] != nil {
-                
-                // 親レスの子リストに追加
-                postMap[parentId]!.children?.append(postMap[post.id]!)
-            } else {
-                // 親がいないレス（ルート）
-                rootPosts.append(postMap[post.id]!)
+            // --- ここを修正：安全な書き換え ---
+            if let child = postMap[post.id] {
+                postMap[parentId]?.children?.append(child)
+            }
+        } else {
+            // 親がいないレス（ルート）
+            if let root = postMap[post.id] {
+                rootPosts.append(root)
             }
         }
-        return rootPosts
     }
+    return rootPosts
+}
 
     func fetchThreadList() async {
         isFetching = true
