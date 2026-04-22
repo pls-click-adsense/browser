@@ -2,52 +2,37 @@ import SwiftUI
 
 struct ThreadListView: View {
     @StateObject var viewModel = BBSViewModel()
-    @State private var searchText = ""
-    @State private var sortOption: SortOption = .ikioi
-    @State private var webURL: IdentifiableURL? = nil // ブラウザ用
-    
-    var filteredThreads: [Thread] {
-        let list = searchText.isEmpty ? viewModel.threads : viewModel.threads.filter { $0.title.contains(searchText) }
-        switch sortOption {
-        case .ikioi: return list.sorted { $0.ikioi > $1.ikioi }
-        case .resCount: return list.sorted { $0.resCount > $1.resCount }
-        case .new: return list.sorted { $0.createdAt > $1.createdAt }
-        }
-    }
+    @State private var webURL: IdentifiableURL? = nil
     
     var body: some View {
         NavigationStack {
-            List(filteredThreads) { thread in
-                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: thread)) {
+            List(viewModel.threads) { t in
+                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(thread.title).font(.headline).lineLimit(2)
+                        Text(t.title).font(.subheadline).bold().lineLimit(2)
                         HStack {
-                            Text("\(thread.resCount) res").foregroundColor(.secondary)
+                            Text("\(t.resCount) res").foregroundColor(.secondary)
                             Spacer()
-                            Text(String(format: "%.1f", thread.ikioi)).foregroundColor(.orange).bold()
-                        }.font(.caption)
+                            Text(String(format: "%.0f", t.ikioi)).foregroundColor(.orange).bold()
+                        }.font(.caption2)
                     }
                 }
             }
-            .listStyle(.plain)
             .navigationTitle("エッジ板")
-            .searchable(text: $searchText, prompt: "スレタイ検索")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     HStack {
-                        // 内部ブラウザボタン
                         Button(action: { webURL = IdentifiableURL(url: URL(string: AppConfig.boardURL)!) }) {
                             Image(systemName: "safari")
                         }
-                        // クッキー削除ボタン
-                        Button(action: { deleteCookies() }) {
+                        Button(action: { Task { await viewModel.clearWebData() } }) {
                             Image(systemName: "trash")
                         }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Picker("ソート", selection: $sortOption) {
+                        Picker("ソート", selection: $viewModel.sortOption) {
                             ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
@@ -56,18 +41,11 @@ struct ThreadListView: View {
             .sheet(item: $webURL) { item in
                 NavigationStack {
                     WebView(url: item.url)
-                        .navigationTitle("ブラウザ")
-                        .navigationBarTitleDisplayMode(.inline)
                         .toolbar { Button("閉じる") { webURL = nil } }
                 }
             }
-            .onAppear { Task { await viewModel.fetchThreads() } }
+            .refreshable { await viewModel.fetchThreadList() }
+            .onAppear { if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } } }
         }
-    }
-    
-    func deleteCookies() {
-        let storage = HTTPCookieStorage.shared
-        storage.cookies?.forEach { storage.deleteCookie($0) }
-        print("Cookies deleted")
     }
 }
