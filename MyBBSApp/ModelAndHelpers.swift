@@ -2,14 +2,9 @@ import SwiftUI
 import WebKit
 
 struct AppConfig {
-    // 板のトップURL（末尾のスラッシュは付けておくのが無難）
+    static let customUserAgent = "AbeShinzo/1.0.0"
     static let boardURL = "https://bbs.eddibb.cc/liveedge/"
-    
-    // 書き込み用CGI
     static let postURL = "https://bbs.eddibb.cc/test/bbs.cgi"
-    
-    // 指定のUA
-    static let customUserAgent = "Monazilla/1.00 (AbeShinzo/1.0.0)"
 }
 
 struct Thread: Identifiable {
@@ -26,81 +21,21 @@ struct Post: Identifiable {
     let mail: String
     let dateAndId: String
     let body: String
-    var referencedBy: [Int] = [] // 自分へのレス番号リスト
-}
-
-enum SortOption: String, CaseIterable { case ikioi = "🔥 勢い順", resCount = "📊 レス数順", new = "✨ 新着順" }
-struct IdentifiableID: Identifiable { let id: String }
-struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
-struct IdentifiableResList: Identifiable { let id = UUID(); let ids: [Int] } // 追加
-
-func decodeHTMLEntities(_ text: String) -> String {
-    var decoded = text
-        .replacingOccurrences(of: "&gt;", with: ">")
-        .replacingOccurrences(of: "&lt;", with: "<")
-        .replacingOccurrences(of: "&amp;", with: "&")
-        .replacingOccurrences(of: "&quot;", with: "\"")
-        .replacingOccurrences(of: "&#39;", with: "'")
-    let pattern = "&#(\\d+);"
-    let regex = try? NSRegularExpression(pattern: pattern)
-    let matches = regex?.matches(in: decoded, options: [], range: NSRange(decoded.startIndex..., in: decoded)) ?? []
-    for match in matches.reversed() {
-        if let codeRange = Range(match.range(at: 1), in: decoded),
-           let codePoint = UInt32(decoded[codeRange]),
-           let scalar = UnicodeScalar(codePoint) {
-            decoded.replaceSubrange(Range(match.range, in: decoded)!, with: String(scalar))
-        }
-    }
-    return decoded
-}
-
-extension Data {
-    var sjisString: String? {
-        let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-        return String(data: self, encoding: enc)
-    }
-}
-
-struct WebView: UIViewRepresentable {
-    let url: URL
-    func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView(); webView.customUserAgent = AppConfig.customUserAgent; return webView
-    }
-    func updateUIView(_ uiView: WKWebView, context: Context) { uiView.load(URLRequest(url: url)) }
-}
-
-extension Post {
+    
     var attributedBody: AttributedString {
-        let cleanBody: String = decodeHTMLEntities(body)
-        var attrString = AttributedString(cleanBody)
-        let range = NSRange(cleanBody.startIndex..., in: cleanBody)
-        
-        let ankaPattern = ">>(\\d+)"
-        if let regex = try? NSRegularExpression(pattern: ankaPattern) {
-            let matches = regex.matches(in: cleanBody, options: [], range: range)
-            for match in matches.reversed() {
-                guard let resRange = Range(match.range, in: attrString),
-                      let numRange = Range(match.range(at: 1), in: cleanBody) else { continue }
-                attrString[resRange].link = URL(string: "anka://\(cleanBody[numRange])")
-                attrString[resRange].foregroundColor = .blue
-            }
-        }
-        
-        let urlPattern = "https?://[a-zA-Z0-9\\-\\.\\/\\?\\:\\@\\&\\=\\%\\#\\_\\!\\~\\*\\'\\(\\)\\,\\+]+"
-        if let regex = try? NSRegularExpression(pattern: urlPattern) {
-            let matches = regex.matches(in: cleanBody, options: [], range: range)
-            for match in matches.reversed() {
-                guard let resRange = Range(match.range, in: attrString),
-                      let urlRange = Range(match.range, in: cleanBody),
-                      let url = URL(string: String(cleanBody[urlRange])) else { continue }
-                attrString[resRange].link = url
-                attrString[resRange].foregroundColor = .blue
-                attrString[resRange].underlineStyle = .single
-            }
+        var attrString = AttributedString(body)
+        let pattern = ">>(\\d+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return attrString }
+        let matches = regex.matches(in: body, options: [], range: NSRange(body.startIndex..., in: body))
+        for match in matches.reversed() {
+            guard let resRange = Range(match.range, in: attrString),
+                  let numRange = Range(match.range(at: 1), in: body) else { continue }
+            attrString[resRange].link = URL(string: "anka://\(body[numRange])")
+            attrString[resRange].foregroundColor = .blue
         }
         return attrString
     }
-    
+
     var imageUrls: [URL] {
         let pattern = "https?://(?:i\\.)?imgur\\.com/([a-zA-Z0-9]+)(?:\\.[a-z]+)?"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
@@ -109,5 +44,69 @@ extension Post {
             guard let idRange = Range(match.range(at: 1), in: body) else { return nil }
             return URL(string: "https://i.imgur.com/\(body[idRange]).jpg")
         }
+    }
+}
+
+enum SortOption: String, CaseIterable { 
+    case ikioi = "🔥 勢い", resCount = "📊 レス数", new = "✨ 新着" 
+}
+
+struct IdentifiableID: Identifiable { let id: String }
+struct IdentifiableURL: Identifiable { let id = UUID(); let url: URL }
+
+struct WebView: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> WKWebView {
+        let v = WKWebView()
+        v.customUserAgent = AppConfig.customUserAgent
+        return v
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) { uiView.load(URLRequest(url: url)) }
+}
+
+struct PostRow: View {
+    let post: Post
+    let viewModel: BBSViewModel
+    let onIDTap: (String) -> Void
+    let onAnkaTap: (Int) -> Void
+    let onImageTap: (URL) -> Void
+    let onURLTap: (URL) -> Void
+
+    var body: some View {
+        let stats = viewModel.getIDStats(for: post)
+        let idString = viewModel.extractID(from: post.dateAndId) ?? "???"
+        
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                Text("\(post.id)").bold().foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(post.name).foregroundColor(.green).bold()
+                    HStack {
+                        Button(action: { onIDTap(idString) }) { Text("ID:\(idString)").underline() }.buttonStyle(.plain)
+                        Text("(\(stats.current)/\(stats.total))").foregroundColor(stats.total >= 5 ? .red : .secondary)
+                        Text(post.dateAndId.components(separatedBy: " ID:")[0])
+                    }.font(.caption2).foregroundColor(.secondary)
+                }
+            }.font(.caption)
+            
+            Text(post.attributedBody)
+                .font(.body)
+                .environment(\.openURL, OpenURLAction { url in
+                    if url.scheme == "anka", let num = Int(url.host ?? "") { onAnkaTap(num); return .handled }
+                    onURLTap(url)
+                    return .handled
+                })
+            
+            if !post.imageUrls.isEmpty {
+                HStack {
+                    ForEach(post.imageUrls, id: \.self) { url in
+                        Button(action: { onImageTap(url) }) {
+                            AsyncImage(url: url) { i in i.resizable().aspectRatio(contentMode: .fill).frame(width: 80, height: 80).cornerRadius(8) } placeholder: { ProgressView() }
+                        }.buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
