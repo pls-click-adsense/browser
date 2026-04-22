@@ -32,7 +32,7 @@ class BBSViewModel: ObservableObject {
                 let title = parts2.dropLast().joined(separator: " (")
                 let count = Int(countStr) ?? 0
                 let hours = max((now - timestamp) / 3600, 0.1)
-                return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
+                return Thread(id: datId, title: decodeHTML(title), resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
             }
             applySort()
         } catch { print(error) }
@@ -60,7 +60,7 @@ class BBSViewModel: ObservableObject {
             self.posts = text.components(separatedBy: .newlines).enumerated().compactMap { i, line in
                 let p = line.components(separatedBy: "<>")
                 if p.count < 4 { return nil }
-                return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3].replacingOccurrences(of: "<br>", with: "\n"))
+                return Post(id: i + 1, name: p[0], mail: p[1], dateAndId: p[2], body: p[3])
             }
         } catch { print(error) }
         isFetching = false
@@ -83,7 +83,6 @@ class BBSViewModel: ObservableObject {
             let (data, _) = try await URLSession.shared.data(for: req)
             let text = String(data: data, encoding: sjis) ?? ""
             if text.contains("書き込みました") || text.contains("正常に") {
-                await fetchPosts(datId: threadId)
                 return true
             }
         } catch { print(error) }
