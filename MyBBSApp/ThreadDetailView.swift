@@ -3,24 +3,62 @@ import SwiftUI
 struct ThreadDetailView: View {
     @ObservedObject var viewModel: BBSViewModel
     let thread: Thread
+    @State private var isTreeMode = false
     @State private var selectedID: String? = nil
     @State private var targetRes: Post? = nil
     @State private var zoomImageURL: URL? = nil
     @State private var isShowingPostView = false
     
     var body: some View {
-        List(viewModel.posts) { post in
-            PostRow(post: post, viewModel: viewModel, 
-                    onIDTap: { selectedID = $0 }, 
-                    onAnkaTap: { num in targetRes = viewModel.posts.first { $0.id == num } },
-                    onImageTap: { zoomImageURL = $0 })
-        }
-        .listStyle(.plain)
-        .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
-                    if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+        ScrollViewReader { proxy in
+            Group {
+                if isTreeMode {
+                    // ツリー構造表示
+                    List(viewModel.buildTree(from: viewModel.posts), children: \.children) { post in
+                        PostRow(post: post, viewModel: viewModel, 
+                                onIDTap: { selectedID = $0 }, 
+                                onAnkaTap: { num in targetRes = viewModel.posts.first { $0.id == num } },
+                                onImageTap: { zoomImageURL = $0 })
+                    }
+                    .listStyle(.plain)
+                } else {
+                    // 通常の一覧表示
+                    List(viewModel.posts) { post in
+                        PostRow(post: post, viewModel: viewModel, 
+                                onIDTap: { selectedID = $0 }, 
+                                onAnkaTap: { num in targetRes = viewModel.posts.first { $0.id == num } },
+                                onImageTap: { zoomImageURL = $0 })
+                        .id(post.id)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle(thread.title).navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    // 表示モード切り替え
+                    Button(action: { isTreeMode.toggle() }) {
+                        Image(systemName: isTreeMode ? "list.bullet.indent" : "list.bullet")
+                    }
+                    
+                    // ジャンプボタン (通常モードのみ有効)
+                    if !isTreeMode {
+                        Button(action: { withAnimation { proxy.scrollTo(1, anchor: .top) } }) {
+                            Image(systemName: "chevron.up.circle")
+                        }
+                        Button(action: {
+                            if let lastId = viewModel.posts.last?.id {
+                                withAnimation { proxy.scrollTo(lastId, anchor: .bottom) }
+                            }
+                        }) {
+                            Image(systemName: "chevron.down.circle")
+                        }
+                    }
+                    
+                    // 更新
+                    Button(action: { Task { await viewModel.fetchPosts(datId: thread.id) } }) {
+                        if viewModel.isFetching { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                    }
                 }
             }
         }
