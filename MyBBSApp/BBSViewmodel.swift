@@ -1,90 +1,21 @@
-import SwiftUI
-import WebKit
+import Foundation
 
 @MainActor
 class BBSViewModel: ObservableObject {
     @Published var threads: [Thread] = []
     @Published var posts: [Post] = []
-    @Published var idCounts: [String: Int] = [:]
     @Published var isFetching = false
-    @Published var sortOption: SortOption = .ikioi { didSet { applySort() } }
     
-    private var rawThreads: [Thread] = []
-    
-    // --- ツリー構造の構築 ---
-    // BBSViewmodel.swift の該当箇所を修正
-func buildTree(from allPosts: [Post]) -> [Post] {
-    var postMap = [Int: Post]()
-    var rootPosts = [Post]()
-    
-    // 1. 全ポストをIDでマップ化
-    for post in allPosts {
-        var p = post
-        p.children = [] 
-        postMap[post.id] = p
-    }
-    
-    // 2. 本文からアンカー(>>10)を抽出して親子関係を作る
-    for post in allPosts {
-        let pattern = ">>(\\d+)"
-        let regex = try? NSRegularExpression(pattern: pattern)
-        let nsBody = post.body as NSString
-        let match = regex?.firstMatch(in: post.body, range: NSRange(location: 0, length: nsBody.length))
-        
-        if let match = match, 
-           let range = Range(match.range(at: 1), in: post.body),
-           let parentId = Int(post.body[range]),
-           parentId < post.id,
-           postMap[parentId] != nil {
-            
-            // --- ここを修正：安全な書き換え ---
-            if let child = postMap[post.id] {
-                postMap[parentId]?.children?.append(child)
-            }
-        } else {
-            // 親がいないレス（ルート）
-            if let root = postMap[post.id] {
-                rootPosts.append(root)
-            }
-        }
-    }
-    return rootPosts
-}
-
-    func fetchThreadList() async {
+    func fetchThreads() async {
         isFetching = true
         guard let url = URL(string: AppConfig.boardURL + "subject.txt") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let text = data.sjisString else { return }
-            let now = Date().timeIntervalSince1970
-            self.rawThreads = text.components(separatedBy: .newlines).compactMap { line in
-                let parts = line.components(separatedBy: "<>")
-                if parts.count < 2 { return nil }
-                let datId = parts[0].replacingOccurrences(of: ".dat", with: "")
-                guard let timestamp = Double(datId) else { return nil }
-                
-                let titleLine = parts[1]
-                let parts2 = titleLine.components(separatedBy: " (")
-                let countStr = parts2.last?.replacingOccurrences(of: ")", with: "") ?? "0"
-                let rawTitle = parts2.dropLast().joined(separator: " (")
-                
-                let title = decodeHTMLEntities(rawTitle)
-                let count = Int(countStr) ?? 0
-                let hours = max((now - timestamp) / 3600, 0.1)
-                return Thread(id: datId, title: title, resCount: count, ikioi: Double(count)/hours, createdAt: timestamp)
+            if let content = data.sjisString {
+                self.threads = parseThreads(content)
             }
-            applySort()
         } catch { print(error) }
         isFetching = false
-    }
-    
-    func applySort() {
-        switch sortOption {
-        case .ikioi: threads = rawThreads.sorted { $0.ikioi > $1.ikioi }
-        case .resCount: threads = rawThreads.sorted { $0.resCount > $1.resCount }
-        case .new: threads = rawThreads.sorted { $0.createdAt > $1.createdAt }
-        }
     }
     
     func fetchPosts(datId: String) async {
@@ -92,78 +23,64 @@ func buildTree(from allPosts: [Post]) -> [Post] {
         guard let url = URL(string: AppConfig.boardURL + "dat/\(datId).dat") else { return }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let text = data.sjisString else { return }
-            self.posts = text.components(separatedBy: .newlines).enumerated().compactMap { i, line in
-                let p = line.components(separatedBy: "<>")
-                if p.count < 4 { return nil }
-                let name = p[0].replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                let body = p[3].replacingOccurrences(of: "<br>", with: "\n")
-                return Post(id: i + 1, name: name, mail: p[1], dateAndId: p[2], body: body)
+            if let content = data.sjisString {
+                let rawPosts = parsePosts(content)
+                self.posts = analyzeReferences(for: rawPosts)
             }
-            var counts: [String: Int] = [:]
-            for p in self.posts { if let id = extractID(from: p.dateAndId) { counts[id, default: 0] += 1 } }
-            self.idCounts = counts
         } catch { print(error) }
         isFetching = false
     }
     
-    func postReply(threadId: String, name: String, mail: String, body: String) async -> (isSuccess: Bool, message: String) {
-        guard let url = URL(string: AppConfig.postURL) else { return (false, "URL Error") }
+    private func analyzeReferences(for rawPosts: [Post]) -> [Post] {
+        var updated = rawPosts
+        let regex = try? NSRegularExpression(pattern: ">>(\\d+)")
         
-        func encodeForBBS(_ str: String) -> String {
-            return str.unicodeScalars.reduce("") { result, scalar in
-                if scalar.value <= 0x80 || (0xFF61...0xFF9F).contains(scalar.value) { return result + String(scalar) }
-                let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-                if String(scalar).data(using: enc) != nil { return result + String(scalar) }
-                return result + "&#\(scalar.value);"
+        for post in rawPosts {
+            let nsBody = post.body as NSString
+            let matches = regex?.matches(in: post.body, range: NSRange(location: 0, length: nsBody.length)) ?? []
+            for m in matches {
+                if let r = Range(m.range(at: 1), in: post.body), let targetId = Int(post.body[r]) {
+                    if let idx = updated.firstIndex(where: { $0.id == targetId }) {
+                        updated[idx].referencedBy.append(post.id)
+                    }
+                }
             }
         }
-
-        func sjisEnc(_ str: String) -> String {
-            let enc = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.dosJapanese.rawValue)))
-            let safeStr = encodeForBBS(str)
-            return safeStr.data(using: enc)?.map { String(format: "%%%02X", $0) }.joined() ?? ""
-        }
-        
-        let params = [("bbs","liveedge"),("key",threadId),("FROM",name),("mail",mail),("MESSAGE",body),("submit","書き込む")]
-        let bodyStr = params.map { "\($0)=\(sjisEnc($1))" }.joined(separator: "&")
-        
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.httpBody = bodyStr.data(using: .ascii)
-        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        req.setValue("\(AppConfig.boardURL)\(threadId)", forHTTPHeaderField: "Referer")
-        req.setValue(AppConfig.customUserAgent, forHTTPHeaderField: "User-Agent")
-        
-        do {
-            let (data, res) = try await URLSession.shared.data(for: req)
-            let status = (res as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 200 {
-                await fetchPosts(datId: threadId)
-                return (true, "")
-            }
-            let text = data.sjisString ?? "Unknown Error"
-            return (false, "Status: \(status)\n\(text)")
-        } catch { return (false, error.localizedDescription) }
+        return updated
     }
     
-    func extractID(from str: String) -> String? {
-        let pattern = "ID:([^\\s]+)"
-        let regex = try? NSRegularExpression(pattern: pattern)
-        if let m = regex?.firstMatch(in: str, range: NSRange(str.startIndex..., in: str)) {
-            return String(str[Range(m.range(at: 1), in: str)!])
+    private func parseThreads(_ content: String) -> [Thread] {
+        content.components(separatedBy: "\n").compactMap { line in
+            let parts = line.components(separatedBy: "<>")
+            guard parts.count >= 2, let datId = parts[0].components(separatedBy: ".").first else { return nil }
+            let titleAndCount = parts[1]
+            let countPattern = "\\((\\d+)\\)$"
+            let regex = try? NSRegularExpression(pattern: countPattern)
+            let nsString = titleAndCount as NSString
+            let match = regex?.firstMatch(in: titleAndCount, range: NSRange(location: 0, length: nsString.length))
+            let count = match.map { Int(nsString.substring(with: $0.range(at: 1))) ?? 0 } ?? 0
+            let title = regex?.stringByReplacingMatches(in: titleAndCount, range: NSRange(location: 0, length: nsString.length), withTemplate: "").trimmingCharacters(in: .whitespaces) ?? titleAndCount
+            return Thread(id: datId, title: title, resCount: count, ikioi: 0, createdAt: Double(datId) ?? 0)
         }
-        return nil
     }
-
-    func getIDStats(for p: Post) -> (current: Int, total: Int) {
-        guard let id = extractID(from: p.dateAndId) else { return (1, 1) }
-        let currentCount = posts.prefix(p.id).filter { extractID(from: $0.dateAndId) == id }.count
-        return (currentCount, idCounts[id] ?? 0)
+    
+    private func parsePosts(_ content: String) -> [Post] {
+        content.components(separatedBy: "\n").enumerated().compactMap { (index, line) in
+            let parts = line.components(separatedBy: "<>")
+            guard parts.count >= 4 else { return nil }
+            return Post(id: index + 1, name: parts[0], mail: parts[1], dateAndId: parts[2], body: parts[3])
+        }
     }
-
-    func clearWebData() async {
-        let store = WKWebsiteDataStore.default()
-        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: Date(timeIntervalSince1970: 0))
+    
+    func extractID(from dateAndId: String) -> String? {
+        let parts = dateAndId.components(separatedBy: " ID:")
+        return parts.count > 1 ? parts[1] : nil
+    }
+    
+    func getIDStats(for post: Post) -> (current: Int, total: Int) {
+        let id = extractID(from: post.dateAndId) ?? ""
+        let allWithID = posts.filter { extractID(from: $0.dateAndId) == id }
+        let currentIdx = (allWithID.firstIndex(where: { $0.id == post.id }) ?? 0) + 1
+        return (currentIdx, allWithID.count)
     }
 }
