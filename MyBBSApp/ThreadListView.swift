@@ -2,50 +2,71 @@ import SwiftUI
 
 struct ThreadListView: View {
     @StateObject var viewModel = BBSViewModel()
-    @State private var webURL: IdentifiableURL? = nil
+    @State private var showClearConfirm = false
     
     var body: some View {
-        NavigationStack {
-            List(viewModel.threads) { t in
-                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(t.title).font(.subheadline).bold().lineLimit(2)
+        NavigationView {
+            ZStack {
+                List {
+                    ForEach(viewModel.threads) { thread in
+                        NavigationLink(destination: ThreadDetailView(thread: thread, viewModel: viewModel)) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(thread.title).font(.headline).lineLimit(2)
+                                HStack {
+                                    Text("レス: \(thread.resCount)")
+                                    Spacer()
+                                    Text("勢い: \(Int(thread.ikioi))").foregroundColor(.orange)
+                                }.font(.caption)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .onAppear {
+                            // リストの末尾付近に来たら追加読み込みを試みる
+                            Task { await viewModel.loadMoreThreadsIfNeeded(currentThread: thread) }
+                        }
+                    }
+                    
+                    // 下端に到達した時のインジケーター（上に引っ張る演出用）
+                    if viewModel.isLoadingMore {
                         HStack {
-                            Text("\(t.resCount) res").foregroundColor(.secondary)
                             Spacer()
-                            Text(String(format: "%.0f", t.ikioi)).foregroundColor(.orange).bold()
-                        }.font(.caption2)
+                            ProgressView()
+                            Text("読み込み中...").font(.caption).foregroundColor(.gray)
+                            Spacer()
+                        }.padding()
                     }
                 }
+                .refreshable { await viewModel.fetchThreadList() } // 下に引っ張って更新
+                
+                if viewModel.isFetching && viewModel.threads.isEmpty {
+                    ProgressView("読み込み中...")
+                }
             }
-            .navigationTitle("エッジ板")
+            .navigationTitle("ニュース速報(VIP)")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HStack {
-                        Button(action: { webURL = IdentifiableURL(url: URL(string: AppConfig.boardURL)!) }) {
-                            Image(systemName: "safari")
-                        }
-                        Button(action: { Task { await viewModel.clearWebData() } }) {
-                            Image(systemName: "trash")
-                        }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Picker("ソート", selection: $viewModel.sortOption) {
+                        ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.menu)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showClearConfirm = true }) {
+                        Image(systemName: "trash").foregroundColor(.red)
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Picker("ソート", selection: $viewModel.sortOption) {
-                            ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                        }
-                    } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
-                }
             }
-            .sheet(item: $webURL) { item in
-                NavigationStack {
-                    WebView(url: item.url)
-                        .toolbar { Button("閉じる") { webURL = nil } }
-                }
+        }
+        // クッキー削除の確認（ワンクッション）
+        .confirmationDialog("データの削除", isPresented: $showClearConfirm, titleVisibility: .visible) {
+            Button("キャッシュとクッキーを消去", role: .destructive) {
+                Task { await viewModel.clearWebData() }
             }
-            .refreshable { await viewModel.fetchThreadList() }
-            .onAppear { if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } } }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("すべての閲覧履歴とクッキーが削除されます。")
+        }
+        .onAppear {
+            if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } }
         }
     }
 }
