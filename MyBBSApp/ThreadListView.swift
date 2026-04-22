@@ -2,59 +2,45 @@ import SwiftUI
 
 struct ThreadListView: View {
     @StateObject var viewModel = BBSViewModel()
-    @State private var isShowingBrowser = false
-    @State private var isShowingClearAlert = false
+    @State private var searchText = ""
+    @State private var sortOption: SortOption = .ikioi
+    
+    var filteredThreads: [Thread] {
+        let list = searchText.isEmpty ? viewModel.threads : viewModel.threads.filter { $0.title.contains(searchText) }
+        switch sortOption {
+        case .ikioi: return list.sorted { $0.ikioi > $1.ikioi }
+        case .resCount: return list.sorted { $0.resCount > $1.resCount }
+        case .new: return list.sorted { $0.createdAt > $1.createdAt }
+        }
+    }
     
     var body: some View {
         NavigationStack {
-            List {
-                Section("🛠 設定・認証") {
-                    Button(action: { isShowingBrowser = true }) {
-                        Label("独立認証ブラウザを開く", systemImage: "safari.fill").bold()
-                    }
-                    Button(role: .destructive, action: { isShowingClearAlert = true }) {
-                        Label("キャッシュ・Cookie削除", systemImage: "trash")
-                    }
-                }
-                Section("📜 スレッド一覧") {
-                    ForEach(viewModel.threads) { t in
-                        NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: t)) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(t.title).font(.subheadline).fontWeight(.medium).lineLimit(2)
-                                HStack {
-                                    Label("\(t.resCount)", systemImage: "bubble.right").foregroundColor(.secondary)
-                                    Label("\(Int(t.ikioi))", systemImage: "bolt.fill").foregroundColor(t.ikioi > 500 ? .red : .orange)
-                                    Spacer()
-                                    Text(Date(timeIntervalSince1970: t.createdAt), style: .time).foregroundColor(.secondary)
-                                }.font(.caption2)
-                            }.padding(.vertical, 2)
-                        }
+            List(filteredThreads) { thread in
+                NavigationLink(destination: ThreadDetailView(viewModel: viewModel, thread: thread)) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(thread.title).font(.headline).lineLimit(2)
+                        HStack {
+                            Text("\(thread.resCount) res").foregroundColor(.secondary)
+                            Spacer()
+                            Text(String(format: "%.1f", thread.ikioi)).foregroundColor(.orange).bold()
+                        }.font(.caption)
                     }
                 }
             }
-            .navigationTitle("liveedge")
+            .listStyle(.plain)
+            .navigationTitle("エッジ板")
+            .searchable(text: $searchText, prompt: "スレタイ検索")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Picker("ソート", selection: $viewModel.sortOption) {
+                        Picker("ソート", selection: $sortOption) {
                             ForEach(SortOption.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }
                     } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
                 }
             }
-            .alert("削除確認", isPresented: $isShowingClearAlert) {
-                Button("削除", role: .destructive) { Task { await viewModel.clearWebData() } }
-                Button("キャンセル", role: .cancel) {}
-            } message: { Text("認証情報をリセットしますか？") }
-            .sheet(isPresented: $isShowingBrowser) {
-                NavigationStack {
-                    WebView(url: URL(string: AppConfig.boardURL)!)
-                        .navigationTitle("認証用ブラウザ").navigationBarTitleDisplayMode(.inline)
-                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("閉じる") { isShowingBrowser = false } } }
-                }
-            }
-            .refreshable { await viewModel.fetchThreadList() }
-            .onAppear { if viewModel.threads.isEmpty { Task { await viewModel.fetchThreadList() } } }
+            .onAppear { Task { await viewModel.fetchThreads() } }
         }
     }
 }
