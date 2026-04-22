@@ -15,6 +15,17 @@ struct Thread: Identifiable {
     let createdAt: Double
 }
 
+// HTMLエンティティをデコードする関数
+func decodeHTML(_ text: String) -> String {
+    return text
+        .replacingOccurrences(of: "&gt;", with: ">")
+        .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&amp;", with: "&")
+        .replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&#39;", with: "'")
+        .replacingOccurrences(of: "<br>", with: "\n")
+}
+
 struct Post: Identifiable {
     let id: Int
     let name: String
@@ -23,14 +34,15 @@ struct Post: Identifiable {
     let body: String
     
     var attributedBody: AttributedString {
-        var attrString = AttributedString(body)
+        let cleanBody = decodeHTML(body)
+        var attrString = AttributedString(cleanBody)
         let pattern = ">>(\\d+)"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return attrString }
-        let matches = regex.matches(in: body, options: [], range: NSRange(body.startIndex..., in: body))
+        let matches = regex.matches(in: cleanBody, options: [], range: NSRange(cleanBody.startIndex..., in: cleanBody))
         for match in matches.reversed() {
             guard let resRange = Range(match.range, in: attrString),
-                  let numRange = Range(match.range(at: 1), in: body) else { continue }
-            attrString[resRange].link = URL(string: "anka://\(body[numRange])")
+                  let numRange = Range(match.range(at: 1), in: cleanBody) else { continue }
+            attrString[resRange].link = URL(string: "anka://\(cleanBody[numRange])")
             attrString[resRange].foregroundColor = .blue
         }
         return attrString
@@ -80,7 +92,7 @@ struct PostRow: View {
             HStack(alignment: .top) {
                 Text("\(post.id)").bold().foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(post.name).foregroundColor(.green).bold()
+                    Text(decodeHTML(post.name)).foregroundColor(.green).bold()
                     HStack {
                         Button(action: { onIDTap(idString) }) { Text("ID:\(idString)").underline() }.buttonStyle(.plain)
                         Text("(\(stats.current)/\(stats.total))").foregroundColor(stats.total >= 5 ? .red : .secondary)
@@ -91,6 +103,7 @@ struct PostRow: View {
             
             Text(post.attributedBody)
                 .font(.body)
+                .textSelection(.enabled)
                 .environment(\.openURL, OpenURLAction { url in
                     if url.scheme == "anka", let num = Int(url.host ?? "") { onAnkaTap(num); return .handled }
                     onURLTap(url)
@@ -98,11 +111,13 @@ struct PostRow: View {
                 })
             
             if !post.imageUrls.isEmpty {
-                HStack {
-                    ForEach(post.imageUrls, id: \.self) { url in
-                        Button(action: { onImageTap(url) }) {
-                            AsyncImage(url: url) { i in i.resizable().aspectRatio(contentMode: .fill).frame(width: 80, height: 80).cornerRadius(8) } placeholder: { ProgressView() }
-                        }.buttonStyle(.plain)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(post.imageUrls, id: \.self) { url in
+                            Button(action: { onImageTap(url) }) {
+                                AsyncImage(url: url) { i in i.resizable().aspectRatio(contentMode: .fill).frame(width: 100, height: 100).cornerRadius(8) } placeholder: { ProgressView().frame(width: 100, height: 100) }
+                            }.buttonStyle(.plain)
+                        }
                     }
                 }
             }
