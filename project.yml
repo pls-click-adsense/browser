@@ -15,15 +15,18 @@ targets:
       INFOPLIST_KEY_CFBundleDisplayName: "Browser"
       INFOPLIST_KEY_UILaunchScreen_Generation: YES
       
-      # 独自スキームの登録(CFBundleURLTypes)は不要になったので削除
-      
-      # HTTP/HTTPSの制限を解除（プロキシ通信に必須）
+      # 通信許可
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
 
-      # 実機ビルド用の設定（署名なし）
+      # --- エラー回避のためのビルド設定 ---
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone" # 最適化をオフにしてビルドエラーを回避
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      
+      # 署名なし実機実行のためのガチガチ設定
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
+      AD_HOC_CODE_SIGNING_ALLOWED: YES
       ENTITLEMENTS_REQUIRED: false
       DEVELOPMENT_TEAM: ""
