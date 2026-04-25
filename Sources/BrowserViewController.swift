@@ -2,18 +2,12 @@ import UIKit
 import WebKit
 import Combine
 
-// MARK: - BrowserViewController
-
 class BrowserViewController: UIViewController {
-
-    // MARK: Properties
 
     private let sessions: [TabSession]
     private var activeIndex: Int = 0
     private var isEditingURL: Bool = false
     private var cancellables = Set<AnyCancellable>()
-
-    // MARK: UI Parts
 
     private let headerView = UIView()
     private let backButton = UIButton(type: .system)
@@ -25,22 +19,17 @@ class BrowserViewController: UIViewController {
     private let footerView = UIView()
     private var tabButtons: [UIButton] = []
     private let memoButton = UIButton(type: .system)
+    private let tabStack = UIStackView()
 
-    private var webViewContainer = UIView()
-
+    private let webViewContainer = UIView()
     private var memoView: UITextView?
-    private var showMemo: Bool = false
-
-    // MARK: Init
+    private var showMemo = false
 
     init(sessions: [TabSession]) {
         self.sessions = sessions
         super.init(nibName: nil, bundle: nil)
     }
-
     required init?(coder: NSCoder) { fatalError() }
-
-    // MARK: Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -50,17 +39,13 @@ class BrowserViewController: UIViewController {
         setupFooter()
         setupConstraints()
         switchTab(to: 0)
-        observeURL()
 
         NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(appDidEnterBackground),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
-        )
+            self, selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
     }
 
-    // MARK: Setup
+    // MARK: - Setup
 
     private func setupWebViewContainer() {
         webViewContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -85,15 +70,12 @@ class BrowserViewController: UIViewController {
         headerView.backgroundColor = .systemBackground
         view.addSubview(headerView)
 
-        // 戻る
         backButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
         backButton.addTarget(self, action: #selector(goBack), for: .touchUpInside)
 
-        // 進む
         forwardButton.setImage(UIImage(systemName: "chevron.right"), for: .normal)
         forwardButton.addTarget(self, action: #selector(goForward), for: .touchUpInside)
 
-        // URLフィールド
         urlField.borderStyle = .roundedRect
         urlField.keyboardType = .URL
         urlField.autocapitalizationType = .none
@@ -101,49 +83,36 @@ class BrowserViewController: UIViewController {
         urlField.returnKeyType = .go
         urlField.delegate = self
 
-        // リロード
         reloadButton.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
         reloadButton.addTarget(self, action: #selector(reload), for: .touchUpInside)
 
-        // ゴミ箱
         trashButton.setImage(UIImage(systemName: "trash"), for: .normal)
         trashButton.tintColor = .systemRed
         trashButton.addTarget(self, action: #selector(clearCookies), for: .touchUpInside)
 
-        for v in [backButton, forwardButton, urlField, reloadButton, trashButton] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            headerView.addSubview(v)
+        let controlStack = UIStackView(arrangedSubviews: [backButton, forwardButton, urlField, reloadButton, trashButton])
+        controlStack.axis = .horizontal
+        controlStack.spacing = 4
+        controlStack.translatesAutoresizingMaskIntoConstraints = false
+        headerView.addSubview(controlStack)
+
+        for btn in [backButton, forwardButton, reloadButton, trashButton] {
+            btn.widthAnchor.constraint(equalToConstant: 36).isActive = true
         }
 
+        // コンテンツはsafeAreaの下から52pt分
         NSLayoutConstraint.activate([
-            backButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 8),
-            backButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 36),
-
-            forwardButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 4),
-            forwardButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            forwardButton.widthAnchor.constraint(equalToConstant: 36),
-
-            urlField.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 4),
-            urlField.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            urlField.heightAnchor.constraint(equalToConstant: 36),
-
-            reloadButton.leadingAnchor.constraint(equalTo: urlField.trailingAnchor, constant: 4),
-            reloadButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            reloadButton.widthAnchor.constraint(equalToConstant: 36),
-
-            trashButton.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 4),
-            trashButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
-            trashButton.widthAnchor.constraint(equalToConstant: 36),
-            trashButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
+            controlStack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 8),
+            controlStack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
+            controlStack.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -8),
+            controlStack.heightAnchor.constraint(equalToConstant: 36),
         ])
     }
 
     private func setupFooter() {
         footerView.translatesAutoresizingMaskIntoConstraints = false
-        footerView.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.85)
+        footerView.backgroundColor = .systemBackground
 
-        // すりガラス
         let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
         blur.translatesAutoresizingMaskIntoConstraints = false
         footerView.addSubview(blur)
@@ -156,11 +125,10 @@ class BrowserViewController: UIViewController {
 
         view.addSubview(footerView)
 
-        let stack = UIStackView()
-        stack.axis = .horizontal
-        stack.distribution = .fill
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        footerView.addSubview(stack)
+        tabStack.axis = .horizontal
+        tabStack.distribution = .fillEqually
+        tabStack.translatesAutoresizingMaskIntoConstraints = false
+        footerView.addSubview(tabStack)
 
         for i in 0..<5 {
             let btn = UIButton(type: .system)
@@ -168,50 +136,48 @@ class BrowserViewController: UIViewController {
             btn.titleLabel?.font = .boldSystemFont(ofSize: 17)
             btn.tag = i
             btn.addTarget(self, action: #selector(tabTapped(_:)), for: .touchUpInside)
-            stack.addArrangedSubview(btn)
+            tabStack.addArrangedSubview(btn)
             tabButtons.append(btn)
-            btn.widthAnchor.constraint(equalTo: stack.widthAnchor, multiplier: 1.0/6.0).isActive = true
         }
 
         memoButton.setImage(UIImage(systemName: "note.text"), for: .normal)
         memoButton.addTarget(self, action: #selector(toggleMemo), for: .touchUpInside)
-        stack.addArrangedSubview(memoButton)
-        memoButton.widthAnchor.constraint(equalTo: stack.widthAnchor, multiplier: 1.0/6.0).isActive = true
+        tabStack.addArrangedSubview(memoButton)
 
-        // stackはfooterViewの上部52ptだけ（ホームインジケーターより上）
+        // tabStackはsafeAreaの上端から52ptだけ（ホームインジケーターより上）
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: footerView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: footerView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: footerView.trailingAnchor),
-            stack.heightAnchor.constraint(equalToConstant: 52),
+            tabStack.topAnchor.constraint(equalTo: footerView.topAnchor),
+            tabStack.leadingAnchor.constraint(equalTo: footerView.leadingAnchor),
+            tabStack.trailingAnchor.constraint(equalTo: footerView.trailingAnchor),
+            tabStack.heightAnchor.constraint(equalToConstant: 52),
         ])
     }
 
     private func setupConstraints() {
-        let safeArea = view.safeAreaLayoutGuide
+        let safe = view.safeAreaLayoutGuide
 
         NSLayoutConstraint.activate([
-            // ヘッダー：safeAreaの上端 〜 固定高さ52
-            headerView.topAnchor.constraint(equalTo: safeArea.topAnchor),
+            // ヘッダー：画面の一番上(view.top)から始めて、safeArea.topの下52ptまで
+            headerView.topAnchor.constraint(equalTo: view.topAnchor),
             headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: 52),
+            headerView.bottomAnchor.constraint(equalTo: safe.topAnchor, constant: 52),
 
-            // WebView：ヘッダー下 〜 フッター上
+            // WebView：ヘッダー下からフッター上まで
             webViewContainer.topAnchor.constraint(equalTo: headerView.bottomAnchor),
             webViewContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webViewContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             webViewContainer.bottomAnchor.constraint(equalTo: footerView.topAnchor),
 
-            // フッター：safeAreaの下端まで（ホームインジケーター含む）
+            // フッター：画面の一番下(view.bottom)まで、safeArea.bottomの上52ptから始まる
+            footerView.topAnchor.constraint(equalTo: safe.bottomAnchor, constant: -52),
             footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor), // ← safeAreaではなくview
-            footerView.topAnchor.constraint(equalTo: safeArea.bottomAnchor, constant: -52),
+            footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
-    // MARK: Tab
+    // MARK: - Tab
 
     private func switchTab(to index: Int) {
         sessions[activeIndex].saveCookies()
@@ -229,8 +195,7 @@ class BrowserViewController: UIViewController {
     private func updateTabHighlight() {
         for (i, btn) in tabButtons.enumerated() {
             btn.backgroundColor = i == activeIndex
-                ? UIColor.systemBlue.withAlphaComponent(0.2)
-                : .clear
+                ? UIColor.systemBlue.withAlphaComponent(0.2) : .clear
         }
     }
 
@@ -245,22 +210,18 @@ class BrowserViewController: UIViewController {
             .store(in: &cancellables)
     }
 
-    // MARK: Actions
+    // MARK: - Actions
 
     @objc private func goBack() { sessions[activeIndex].webView.goBack() }
     @objc private func goForward() { sessions[activeIndex].webView.goForward() }
     @objc private func reload() { sessions[activeIndex].webView.reload() }
-
-    @objc private func tabTapped(_ sender: UIButton) {
-        switchTab(to: sender.tag)
-    }
+    @objc private func tabTapped(_ sender: UIButton) { switchTab(to: sender.tag) }
 
     @objc private func clearCookies() {
         let alert = UIAlertController(
             title: "クッキーを削除",
             message: "タブ\(activeIndex + 1)のクッキーと履歴を削除します",
-            preferredStyle: .alert
-        )
+            preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "削除", style: .destructive) { [weak self] _ in
             guard let self else { return }
             self.sessions[self.activeIndex].clearCookies {
@@ -277,7 +238,7 @@ class BrowserViewController: UIViewController {
     @objc private func toggleMemo() {
         showMemo.toggle()
         if showMemo {
-            let tv = UITextView(frame: CGRect(x: 0, y: 0, width: 250, height: 200))
+            let tv = UITextView()
             tv.text = sessions[activeIndex].memo
             tv.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.9)
             tv.layer.cornerRadius = 10
@@ -320,12 +281,8 @@ class BrowserViewController: UIViewController {
 // MARK: - UITextFieldDelegate
 
 extension BrowserViewController: UITextFieldDelegate {
-    func textFieldDidBeginEditing(_ textField: UITextField) {
-        isEditingURL = true
-    }
-    func textFieldDidEndEditing(_ textField: UITextField) {
-        isEditingURL = false
-    }
+    func textFieldDidBeginEditing(_ textField: UITextField) { isEditingURL = true }
+    func textFieldDidEndEditing(_ textField: UITextField) { isEditingURL = false }
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         isEditingURL = false
         loadURL(textField.text ?? "")
