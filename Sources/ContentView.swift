@@ -14,7 +14,6 @@ struct TabSession: Identifiable {
         config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
-        // 初期URLをDuckDuckGoに変更
         if let url = URL(string: "https://duckduckgo.com") {
             self.webView.load(URLRequest(url: url))
         }
@@ -36,6 +35,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Header (URLバー)
             HStack(spacing: 8) {
                 Button(action: { sessions[activeIndex].webView.goBack() }) {
                     Image(systemName: "chevron.left")
@@ -51,9 +51,9 @@ struct ContentView: View {
                 }.frame(width: 44, height: 44)
             }
             .padding(.horizontal)
-            .padding(.top, 10) // ステータスバー付近の余白
             .background(Color(.systemBackground))
 
+            // Main (ブラウザ表示)
             ZStack {
                 ForEach(0..<5) { i in
                     if i == activeIndex || i == recentIndex {
@@ -65,13 +65,16 @@ struct ContentView: View {
                 if showMemo {
                     TextEditor(text: $sessions[activeIndex].memo)
                         .frame(width: 250, height: 200)
-                        .background(Color.yellow)
+                        .background(Color.yellow.opacity(0.9))
                         .cornerRadius(10)
                         .padding()
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 }
             }
-
+            .frame(maxWidth: .infinity, maxHeight: .infinity) // ここで全画面を確保
+        }
+        // Footer (タブ切り替え) を safeAreaInset で配置
+        .safeAreaInset(edge: .bottom) {
             HStack(spacing: 0) {
                 ForEach(0..<5) { i in
                     Button(action: { 
@@ -93,17 +96,11 @@ struct ContentView: View {
                         .foregroundColor(showMemo ? .orange : .primary)
                 }
             }
-            .background(Color(.systemGroupedBackground))
-            
-            // 下部の余白（ホームバー対策）
-            Color(.systemGroupedBackground)
-                .frame(height: 34) 
+            .background(Material.thinMaterial) // 背景を透過素材に
         }
-        .edgesIgnoringSafeArea(.bottom)
     }
 
     private func loadURL() {
-        // URLっぽくなければDuckDuckGo検索に飛ばす
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let path: String
         if trimmed.contains(".") && !trimmed.contains(" ") {
