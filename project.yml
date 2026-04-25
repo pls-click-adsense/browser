@@ -8,9 +8,10 @@ targets:
   Browser:
     type: application
     platform: iOS
+    # --- ここを修正 ---
     sources:
-      - Sources
-    # Info.plist の中身を直接指定する（こっちの方が確実）
+      - path: Sources # 実際のフォルダ名に合わせてね
+    # ----------------
     info:
       plist:
         CFBundleDevelopmentRegion: ja_JP
@@ -19,7 +20,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        UILaunchScreen: {} # 👈 これが黒帯を消す魔法
+        UILaunchScreen: {} # これで黒帯が消える
     settings:
       GENERATE_INFOPLIST_FILE: true
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
