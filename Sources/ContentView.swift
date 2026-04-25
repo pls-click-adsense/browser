@@ -5,7 +5,7 @@
 import SwiftUI
 import WebKit
 import Network
-import CryptoKit // UUID生成用
+import CryptoKit
 
 // MARK: - TabProfile（タブごとの静的設定）
 
@@ -51,29 +51,27 @@ final class BrowserTab: ObservableObject, Identifiable {
         self.id = id
         let defaultProfile = TabProfile.defaultProfile(index: id)
         self.profile = defaultProfile
-        // 初期化時に id を渡して WebView を作成
         self.webView = BrowserTab.buildWebView(profile: defaultProfile, id: id)
     }
 
-    /// プロファイルをもとに WKWebView を構築（永続化対応）
+    /// プロファイルをもとに WKWebView を構築
     static func buildWebView(profile: TabProfile, id: Int) -> WKWebView {
         let config = WKWebViewConfiguration()
 
         // ---- DataStore: タブごとにディスク保存領域を分離（永続化） ----
-        // 固定の識別子（TabSession_0 など）を使うことで、アプリを閉じてもデータが残る
         let storeName = "TabSession_\(id)"
-        // 文字列から固定のUUIDを生成
-        let namespace = UUID(uuidString: "6ba7b810-9dad-11d1-80b4-00c04fd430c8")! // DNS namespace
+        let namespace = UUID(uuidString: "6ba7b810-9dad-11d1-80b4-00c04fd430c8")!
         let data = storeName.data(using: .utf8)!
         var hash = Insecure.SHA1.hash(data: data)
         var bytes = Array(hash)
-        bytes[6] = (bytes[6] & 0x0f) | 0x50 // version 5
-        bytes[8] = (bytes[8] & 0x3f) | 0x80 // variant 1
+        bytes[6] = (bytes[6] & 0x0f) | 0x50
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
         let storeUUID = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
         
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeUUID)
 
         // ---- Proxy 設定 (iOS 17+) ----
+        // 【修正箇所】applyCredential の引数を String に修正
         if #available(iOS 17.0, *), !profile.proxyHost.isEmpty {
             var proxyConfig = ProxyConfiguration(
                 httpCONNECTProxy: NWEndpoint.hostPort(
@@ -82,12 +80,10 @@ final class BrowserTab: ObservableObject, Identifiable {
                 )
             )
             if !profile.proxyUsername.isEmpty {
+                // ここを String の直接渡しに修正しました
                 proxyConfig.applyCredential(
-                    URLCredential(
-                        user: profile.proxyUsername,
-                        password: profile.proxyPassword,
-                        persistence: .permanent // 認証情報も永続化
-                    )
+                    username: profile.proxyUsername,
+                    password: profile.proxyPassword
                 )
             }
             config.websiteDataStore.proxyConfigurations = [proxyConfig]
