@@ -50,36 +50,40 @@ class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
 
     init(host: String, port: Int) {
         let config = URLSessionConfiguration.ephemeral
+        // iOSで利用可能なキーのみを使用
         config.connectionProxyDictionary = [
             kCFNetworkProxiesHTTPEnable: 1,
             kCFNetworkProxiesHTTPProxy: host,
-            kCFNetworkProxiesHTTPPort: port,
-            kCFNetworkProxiesHTTPSEnable: 1,
-            kCFNetworkProxiesHTTPSProxy: host,
-            kCFNetworkProxiesHTTPSPort: port
+            kCFNetworkProxiesHTTPPort: port
         ]
         self.session = URLSession(configuration: config)
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url,
-              let originalSchemeUrl = url.absoluteString.replacingOccurrences(of: "proxy-", with: "").url else { return }
+              let originalUrlString = url.absoluteString.replacingOccurrences(of: "proxy-", with: "").url?.absoluteString,
+              let originalUrl = URL(string: originalUrlString) else { return }
         
-        var request = URLRequest(url: originalSchemeUrl)
+        var request = URLRequest(url: originalUrl)
         request.httpMethod = urlSchemeTask.request.httpMethod
         
+        // 元のリクエストのヘッダーをコピー（重要：これがないとサイトが正しく表示されないことが多い）
+        if let allHeaders = urlSchemeTask.request.allHTTPHeaderFields {
+            request.allHTTPHeaderFields = allHeaders
+        }
+
         session.dataTask(with: request) { data, response, error in
+            if let error = error {
+                urlSchemeTask.didFailWithError(error)
+                return
+            }
             if let response = response {
                 urlSchemeTask.didReceive(response)
             }
             if let data = data {
                 urlSchemeTask.didReceive(data)
             }
-            if let error = error {
-                urlSchemeTask.didFailWithError(error)
-            } else {
-                urlSchemeTask.didFinish()
-            }
+            urlSchemeTask.didFinish()
         }.resume()
     }
 
