@@ -1,8 +1,8 @@
-name: MyBBSApp
+name: Browser
 options:
-  bundleIdPrefix: com.yourname
+  bundleIdPrefix: com.mybrowser
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "18.0"
 
 targets:
   MyBBSApp:
