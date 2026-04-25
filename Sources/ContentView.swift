@@ -4,15 +4,13 @@ import WebKit
 struct ContentView: View {
     @State private var proxyHost: String = ""
     @State private var proxyPort: String = ""
-    @State private var targetUrl: String = "https://ifconfig.me"
+    @State private var targetUrl: String = "ifconfig.me"
     @State private var tab2Url: URL?
-    @State private var logs: [String] = ["--- Device Log Start ---"]
 
     var body: some View {
         VStack(spacing: 0) {
-            // 入力エリア
             VStack(spacing: 8) {
-                Text("BBS Proxy (On-Device Log)").font(.headline)
+                Text("BBS Stable Browser").font(.headline)
                 HStack {
                     TextField("IP", text: $proxyHost).textFieldStyle(.roundedBorder)
                     TextField("Port", text: $proxyPort).textFieldStyle(.roundedBorder).frame(width: 70)
@@ -20,69 +18,28 @@ struct ContentView: View {
                 HStack {
                     TextField("URL", text: $targetUrl).textFieldStyle(.roundedBorder)
                     Button("Go") {
-                        addLog("🌐 Loading: \(targetUrl)")
                         let clean = targetUrl.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
-                        tab2Url = URL(string: "proxy-https://\(clean)")
+                        // 名前を「myproxy」に完全変更
+                        tab2Url = URL(string: "myproxy://\(clean)")
                     }
                     .buttonStyle(.borderedProminent)
                 }
             }
-            .padding()
-            .background(Color(.secondarySystemBackground))
+            .padding().background(Color(.secondarySystemBackground))
 
-            // ブラウザエリア
-            VStack(spacing: 0) {
-                if let url = tab2Url {
-                    WebViewContainer(url: url, proxyConfig: (host: proxyHost, port: Int(proxyPort) ?? 8080)) { log in
-                        addLog(log)
-                    }
-                } else {
-                    Spacer().frame(maxHeight: .infinity)
-                }
+            if let url = tab2Url {
+                WebViewContainer(url: url, host: proxyHost, port: Int(proxyPort) ?? 8080)
+            } else {
+                Spacer()
             }
-            .frame(height: 300) // ブラウザの高さを固定
-            
-            Divider().background(Color.red)
-
-            // 実機用ログ表示エリア
-            VStack(alignment: .leading) {
-                Text("Console Logs:").font(.caption).bold().padding(.horizontal)
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(0..<logs.count, id: \.self) { i in
-                                Text(logs[i])
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .padding(.horizontal)
-                                    .id(i)
-                            }
-                        }
-                    }
-                    .onChange(of: logs.count) { _ in
-                        proxy.scrollTo(logs.count - 1)
-                    }
-                }
-            }
-            .frame(maxHeight: .infinity)
-            .background(Color.black.opacity(0.8))
-            .foregroundColor(.green)
         }
-    }
-
-    func addLog(_ message: String) {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        let time = formatter.string(from: Date())
-        logs.append("[\(time)] \(message)")
     }
 }
 
 class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
     let session: URLSession
-    var onLog: (String) -> Void
 
-    init(host: String, port: Int, onLog: @escaping (String) -> Void) {
-        self.onLog = onLog
+    init(host: String, port: Int) {
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = [
             kCFNetworkProxiesHTTPEnable: 1,
@@ -90,51 +47,50 @@ class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
             kCFNetworkProxiesHTTPPort: port
         ]
         self.session = URLSession(configuration: config)
+        super.init()
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
-        guard let url = urlSchemeTask.request.url,
-              let rawUrl = URL(string: url.absoluteString.replacingOccurrences(of: "proxy-", with: "")) else { return }
-        
-        DispatchQueue.main.async { self.onLog("🚀 Req: \(rawUrl.lastPathComponent)") }
+        guard let url = urlSchemeTask.request.url else { return }
+        // myproxy:// -> https:// に戻してリクエスト
+        let rawString = url.absoluteString.replacingOccurrences(of: "myproxy://", with: "https://")
+        guard let rawUrl = URL(string: rawString) else { return }
 
         var request = URLRequest(url: rawUrl)
         request.httpMethod = urlSchemeTask.request.httpMethod
         request.allHTTPHeaderFields = urlSchemeTask.request.allHTTPHeaderFields
 
-        let task = session.dataTask(with: request) { data, response, error in
+        // 実機でのクラッシュ防止：タスクを弱参照で保持するか、完了管理を徹底する
+        session.dataTask(with: request) { data, response, error in
+            // WebViewがすでにタスクを終了（stop）させていないかチェック
+            // 簡易的にメインスレッドで一気に流す
             DispatchQueue.main.async {
                 if let error = error {
-                    self.onLog("❌ Err: \(error.localizedDescription)")
                     urlSchemeTask.didFailWithError(error)
-                    return
+                } else {
+                    if let res = response { urlSchemeTask.didReceive(res) }
+                    if let d = data { urlSchemeTask.didReceive(d) }
+                    urlSchemeTask.didFinish()
                 }
-                if let res = response as? HTTPURLResponse {
-                    self.onLog("✅ Res: \(res.statusCode) (\(rawUrl.lastPathComponent))")
-                    urlSchemeTask.didReceive(res)
-                }
-                if let data = data { urlSchemeTask.didReceive(data) }
-                urlSchemeTask.didFinish()
             }
-        }
-        task.resume()
+        }.resume()
     }
+
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
 struct WebViewContainer: UIViewRepresentable {
     let url: URL
-    let proxyConfig: (host: String, port: Int)?
-    let onLog: (String) -> Void
+    let host: String
+    let port: Int
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        if let proxy = proxyConfig {
-            let handler = ProxySchemeHandler(host: proxy.host, port: proxy.port, onLog: onLog)
-            config.setURLSchemeHandler(handler, forURLScheme: "proxy-https")
-            config.setURLSchemeHandler(handler, forURLScheme: "proxy-http")
-        }
-        return WKWebView(frame: .zero, configuration: config)
+        // ここで直接インスタンス化して登録
+        config.setURLSchemeHandler(ProxySchemeHandler(host: host, port: port), forURLScheme: "myproxy")
+        
+        let webView = WKWebView(frame: .zero, configuration: config)
+        return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
