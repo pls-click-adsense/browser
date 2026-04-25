@@ -110,13 +110,6 @@ struct ContentView: View {
         TabSession(id: 5, ua: "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
     ]
 
-    // ホームインジケーターの高さをUIKitから取得
-    private var safeAreaBottomInset: CGFloat {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets.bottom ?? 0
-    }
-
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             ForEach(0..<5) { i in
@@ -127,13 +120,23 @@ struct ContentView: View {
                 memoOverlay
             }
         }
+        // WebViewをフル画面に広げる
         .ignoresSafeArea()
+        // ヘッダー：backgroundだけノッチ領域まで塗る
         .safeAreaInset(edge: .top, spacing: 0) {
             headerView
+                .background(
+                    Color(.systemBackground)
+                        .ignoresSafeArea(edges: .top)
+                )
         }
+        // フッター：backgroundだけホームインジケーター領域まで塗る
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footerView
-                .padding(.bottom, safeAreaBottomInset)
+                .background(
+                    Material.thinMaterial
+                        .ignoresSafeArea(edges: .bottom)
+                )
         }
         .onAppear {
             sessions[0].loadInitialURL()
@@ -197,7 +200,6 @@ struct ContentView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 52)
-        .background(Color(.systemBackground))
     }
 
     // MARK: - メモオーバーレイ
@@ -229,7 +231,6 @@ struct ContentView: View {
                     .foregroundColor(showMemo ? .orange : .primary)
             }
         }
-        .background(Material.thinMaterial)
     }
 
     // MARK: - タブ切り替え
