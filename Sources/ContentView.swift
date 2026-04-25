@@ -4,13 +4,14 @@ import WebKit
 struct ContentView: View {
     @State private var proxyHost: String = ""
     @State private var proxyPort: String = ""
-    @State private var targetUrl: String = "google.com"
+    @State private var targetUrl: String = "ifconfig.me" // 最初はシンプルなサイトがおすすめ
     @State private var tab2Url: URL?
 
     var body: some View {
         VStack(spacing: 0) {
+            // プロキシ入力パネル
             VStack(spacing: 8) {
-                Text("Custom Scheme Proxy").font(.headline)
+                Text("Double Agent Browser").font(.headline)
                 HStack {
                     TextField("Proxy Host", text: $proxyHost).textFieldStyle(.roundedBorder)
                     TextField("Port", text: $proxyPort).textFieldStyle(.roundedBorder).frame(width: 70)
@@ -18,8 +19,9 @@ struct ContentView: View {
                 HStack {
                     TextField("Target (e.g. google.com)", text: $targetUrl).textFieldStyle(.roundedBorder)
                     Button("Go") {
-                        // httpsを独自スキームに置換してロード
-                        tab2Url = URL(string: "proxy-https://\(targetUrl)")
+                        // 独自スキームに変換してロード
+                        let cleanUrl = targetUrl.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
+                        tab2Url = URL(string: "proxy-https://\(cleanUrl)")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -27,30 +29,30 @@ struct ContentView: View {
             .padding()
             .background(Color(.secondarySystemBackground))
 
+            // 2画面分割表示
             VStack(spacing: 0) {
-                Text("🌐 Tab 1: Direct").font(.caption2).bold()
-                WebViewContainer(url: URL(string: "https://www.google.com")!, proxyConfig: nil)
+                Text("🌐 Tab 1: Direct (Normal)").font(.caption2).bold()
+                WebViewContainer(url: URL(string: "https://ifconfig.me")!, proxyConfig: nil)
                 
                 Divider().frame(height: 5).background(Color.black)
                 
-                Text("🛡️ Tab 2: Proxy Scheme").font(.caption2).bold().foregroundColor(.blue)
+                Text("🛡️ Tab 2: Proxy Guided").font(.caption2).bold().foregroundColor(.blue)
                 if let url = tab2Url {
                     WebViewContainer(url: url, proxyConfig: (host: proxyHost, port: Int(proxyPort) ?? 8080))
                 } else {
-                    Spacer()
+                    Spacer().frame(maxWidth: .infinity).background(Color(.systemGray6))
                 }
             }
         }
     }
 }
 
-// --- プロキシ通信を肩代わりするハンドラ ---
+// --- 通信を乗っ取るハンドラ ---
 class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
     let session: URLSession
 
     init(host: String, port: Int) {
         let config = URLSessionConfiguration.ephemeral
-        // iOSで利用可能なキーのみを使用
         config.connectionProxyDictionary = [
             kCFNetworkProxiesHTTPEnable: 1,
             kCFNetworkProxiesHTTPProxy: host,
@@ -66,8 +68,6 @@ class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
         
         var request = URLRequest(url: originalUrl)
         request.httpMethod = urlSchemeTask.request.httpMethod
-        
-        // 元のリクエストのヘッダーをコピー（重要：これがないとサイトが正しく表示されないことが多い）
         if let allHeaders = urlSchemeTask.request.allHTTPHeaderFields {
             request.allHTTPHeaderFields = allHeaders
         }
@@ -90,23 +90,55 @@ class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
-// --- WebViewラッパー ---
+// --- WebViewとDelegateのセットアップ ---
 struct WebViewContainer: UIViewRepresentable {
     let url: URL
     let proxyConfig: (host: String, port: Int)?
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator(proxyConfig: proxyConfig)
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // プロキシ設定がある場合のみ、ハンドラを登録
         if let proxy = proxyConfig {
             config.setURLSchemeHandler(ProxySchemeHandler(host: proxy.host, port: proxy.port), forURLScheme: "proxy-https")
+            config.setURLSchemeHandler(ProxySchemeHandler(host: proxy.host, port: proxy.port), forURLScheme: "proxy-http")
         }
+        
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.load(URLRequest(url: url))
+    }
+
+    class Coordinator: NSObject, WKNavigationDelegate {
+        let proxyConfig: (host: String, port: Int)?
+
+        init(proxyConfig: (host: String, port: Int)?) {
+            self.proxyConfig = proxyConfig
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url, proxyConfig != nil else {
+                decisionHandler(.allow)
+                return
+            }
+
+            // https/httpで通信しようとしたら、独自スキームにリダイレクトしてハンドラを強制起動
+            if url.scheme == "https" || url.scheme == "http" {
+                let newUrlString = "proxy-" + url.absoluteString
+                if let newUrl = URL(string: newUrlString) {
+                    webView.load(URLRequest(url: newUrl))
+                    decisionHandler(.cancel)
+                    return
+                }
+            }
+            decisionHandler(.allow)
+        }
     }
 }
 
