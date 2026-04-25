@@ -15,11 +15,17 @@ targets:
       INFOPLIST_KEY_CFBundleDisplayName: "Browser"
       INFOPLIST_KEY_UILaunchScreen_Generation: YES
       
-      # 独自スキーム(proxy-https)をアプリが認識できるように設定
+      # --- ここを追加：独自スキームの登録 ---
+      INFOPLIST_KEY_CFBundleURLTypes:
+        - CFBundleURLSchemes:
+            - proxy-https
+            - proxy-http
+          CFBundleURLName: "Proxy Scheme"
+      # -----------------------------------
+
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
 
-      # 署名なしビルドの設定
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
