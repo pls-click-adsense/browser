@@ -2,27 +2,12 @@ import SwiftUI
 import WebKit
 import Combine
 
-// MARK: - WebView
+// MARK: - WebView (シンプルに)
 struct WebView: UIViewRepresentable {
     @ObservedObject var session: TabSession
 
     func makeUIView(context: Context) -> WKWebView {
-        let wv = session.webView
-        wv.scrollView.contentInsetAdjustmentBehavior = .never
-        
-        // UIの高さに合わせてコンテンツの「逃げ」を作る
-        // top: URLバー(約60) + SafeArea(約50) = 110
-        // bottom: タブバー(約60) + 下部余白(約30) = 90
-        let topPadding: CGFloat = 110
-        let bottomPadding: CGFloat = 90
-        
-        wv.scrollView.contentInset = UIEdgeInsets(top: topPadding, left: 0, bottom: bottomPadding, right: 0)
-        wv.scrollView.scrollIndicatorInsets = wv.scrollView.contentInset
-        
-        // 初期位置をパディング分だけ上にずらして、最初からコンテンツが見えるようにする
-        wv.scrollView.contentOffset = CGPoint(x: 0, y: -topPadding)
-        
-        return wv
+        return session.webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
@@ -42,10 +27,11 @@ class TabSession: ObservableObject, Identifiable {
         self.userAgent = ua
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent() 
-        
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.customUserAgent = ua
-        wv.allowsBackForwardNavigationGestures = true // スワイプ戻りを有効化
+        wv.allowsBackForwardNavigationGestures = true
+        // 帯対策：WebViewそのものは変に広がらないようにする
+        wv.scrollView.contentInsetAdjustmentBehavior = .never
         self.webView = wv
 
         loadMemo()
@@ -72,7 +58,7 @@ class TabSession: ObservableObject, Identifiable {
             .store(in: &cancellables)
     }
 
-    // --- Cookie Handling ---
+    // --- Cookie Handling (型変換済み) ---
     func saveCookies() {
         self.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
             let arr = cookies.compactMap { cookie -> [String: Any]? in
@@ -116,7 +102,6 @@ class TabSession: ObservableObject, Identifiable {
 
     func saveMemo() { try? memo.data(using: .utf8)?.write(to: tabDir().appendingPathComponent("memo.txt")) }
     func loadMemo() { if let data = try? Data(contentsOf: tabDir().appendingPathComponent("memo.txt")) { memo = String(data: data, encoding: .utf8) ?? "" } }
-    
     private func tabDir() -> URL {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("tabs/\(id)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -138,33 +123,42 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // LAYER 1: WebView (全画面表示)
-            ForEach(sessions.indices, id: \.self) { i in
-                WebView(session: sessions[i])
-                    .id(sessions[i].id)
-                    .opacity(i == active ? 1 : 0)
-                    .allowsHitTesting(i == active)
-                    .ignoresSafeArea() 
-            }
+        // 重ねるのをやめて、VStackで完全に「分ける」
+        VStack(spacing: 0) {
+            
+            // --- URLバー ---
+            headerView
+                .background(
+                    // バーの背景だけを上に無視して広げる
+                    Color(UIColor.systemBackground)
+                        .ignoresSafeArea(edges: .top)
+                )
 
-            // LAYER 2: UI Components
-            VStack(spacing: 0) {
-                // Header (URL bar)
-                headerView
-                    .background(.ultraThinMaterial)
-                
-                Spacer()
-
-                if showMemo {
-                    memoArea
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+            // --- WebView本体 ---
+            ZStack {
+                ForEach(sessions.indices, id: \.self) { i in
+                    WebView(session: sessions[i])
+                        .id(sessions[i].id)
+                        .opacity(i == active ? 1 : 0)
+                        .allowsHitTesting(i == active)
                 }
-
-                // Footer (Tab bar)
-                tabBarView
-                    .background(.ultraThinMaterial)
+                
+                if showMemo {
+                    VStack {
+                        Spacer()
+                        memoArea
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // --- タブバー ---
+            tabBarView
+                .background(
+                    // バーの背景だけを下に無視して広げる
+                    Color(UIColor.systemBackground)
+                        .ignoresSafeArea(edges: .bottom)
+                )
         }
         .confirmationDialog("クッキー削除", isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
             Button("このタブの履歴を消去", role: .destructive) { sessions[active].clearCookies() }
@@ -173,8 +167,8 @@ struct ContentView: View {
     }
 
     var headerView: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 16) {
+        HStack(spacing: 10) {
+            HStack(spacing: 14) {
                 Button(action: { sessions[active].webView.goBack() }) { Image(systemName: "chevron.left") }
                 Button(action: { sessions[active].webView.goForward() }) { Image(systemName: "chevron.right") }
             }
@@ -183,15 +177,14 @@ struct ContentView: View {
                 .textInputAutocapitalization(.never)
                 .keyboardType(.webSearch)
                 .onSubmit { loadURL() }
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Button(action: { sessions[active].webView.reload() }) { Image(systemName: "arrow.clockwise") }
                 Button(action: { showingDeleteConfirm = true }) { Image(systemName: "trash") }
                 Button(action: { withAnimation { showMemo.toggle() } }) { Image(systemName: "note.text") }
             }
         }
-        .padding(.horizontal)
-        .padding(.top, 60) // ステータスバー避け
-        .padding(.bottom, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     var tabBarView: some View {
@@ -207,12 +200,12 @@ struct ContentView: View {
                         Text(["iPhone", "iPad", "PC", "Android", "IE"][i]).font(.system(size: 8))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
-                    .padding(.bottom, 34) // ホームインジケーター避け
-                    .background(i == active ? Color.blue.opacity(0.12) : Color.clear)
+                    .padding(.vertical, 10)
+                    .background(i == active ? Color.blue.opacity(0.1) : Color.clear)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.primary)
             }
         }
     }
@@ -223,8 +216,8 @@ struct ContentView: View {
             .padding(8)
             .background(Color(UIColor.secondarySystemBackground))
             .cornerRadius(12)
-            .padding([.horizontal, .bottom])
-            .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
+            .padding()
+            .shadow(radius: 10)
     }
 
     private func loadURL() {
