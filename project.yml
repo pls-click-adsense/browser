@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.mybrowser
   deploymentTarget:
     iOS: "18.0"
+
 targets:
   Browser:
     type: application
@@ -10,18 +11,24 @@ targets:
     sources:
       - Sources
     settings:
-  GENERATE_INFOPLIST_FILE: YES
-  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-  INFOPLIST_KEY_CFBundleDevelopmentRegion: "ja_JP"
-  INFOPLIST_KEY_CFBundleDisplayName: "Browser"
-  INFOPLIST_KEY_NSAppTransportSecurity: "{NSAllowsArbitraryLoads = 1;}"
-  INFOPLIST_KEY_UILaunchScreen: "{}"
-
-  # 👇 これ追加
-  INFOPLIST_KEY_UIFileSharingEnabled: YES
-  INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
-
-  CODE_SIGNING_ALLOWED: NO
-  CODE_SIGNING_REQUIRED: NO
-  CODE_SIGN_IDENTITY: ""
-  AD_HOC_CODE_SIGNING_ALLOWED: YES
+      GENERATE_INFOPLIST_FILE: true
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      INFOPLIST_KEY_CFBundleDevelopmentRegion: ja_JP
+      INFOPLIST_KEY_CFBundleDisplayName: Browser
+      
+      # --- ファイルアプリ対応設定 ---
+      # iTunes/ファイルAppでの共有を有効にする
+      INFOPLIST_KEY_UIFileSharingEnabled: true
+      # ドキュメントをその場で開くことを許可（これがないとファイルアプリに表示されない場合があります）
+      INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: true
+      
+      # --- 辞書型の設定（エラー修正済み） ---
+      INFOPLIST_KEY_NSAppTransportSecurity:
+        NSAllowsArbitraryLoads: true
+      INFOPLIST_KEY_UILaunchScreen: {}
+      
+      # --- 署名関連 ---
+      CODE_SIGNING_ALLOWED: false
+      CODE_SIGNING_REQUIRED: false
+      CODE_SIGN_IDENTITY: ""
+      AD_HOC_CODE_SIGNING_ALLOWED: true
