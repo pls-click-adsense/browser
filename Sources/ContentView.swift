@@ -3,87 +3,44 @@ import WebKit
 import Combine
 
 // MARK: - WebView
-
 struct WebView: UIViewRepresentable {
     @ObservedObject var session: TabSession
 
     func makeUIView(context: Context) -> WKWebView {
-        session.webView
+        return session.webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        // WebView差し替え対応
-        if uiView !== session.webView {
-            context.coordinator.replace(old: uiView, new: session.webView)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator {
-        func replace(old: WKWebView, new: WKWebView) {
-            guard let superview = old.superview else { return }
-            new.translatesAutoresizingMaskIntoConstraints = false
-            superview.addSubview(new)
-
-            NSLayoutConstraint.activate([
-                new.topAnchor.constraint(equalTo: superview.topAnchor),
-                new.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
-                new.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
-                new.trailingAnchor.constraint(equalTo: superview.trailingAnchor),
-            ])
-
-            old.removeFromSuperview()
-        }
-    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 // MARK: - TabSession
-
 class TabSession: ObservableObject, Identifiable {
     let id: Int
+    let userAgent: String
 
     @Published var webView: WKWebView
     @Published var currentURL: String = "https://duckduckgo.com"
     @Published var memo: String = ""
-    @Published var userAgent: String
 
     private var cancellables = Set<AnyCancellable>()
 
     init(id: Int, ua: String) {
         self.id = id
         self.userAgent = ua
-        self.webView = Self.makeWebView(ua: ua)
+        
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent() 
+        
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.customUserAgent = ua
+        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        self.webView = wv
 
         loadMemo()
         loadCookies()
-
         observeURL()
         loadInitial()
     }
-
-    // MARK: WebView生成
-
-    static func makeWebView(ua: String) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
-
-        let wv = WKWebView(frame: .zero, configuration: config)
-        wv.customUserAgent = ua
-        return wv
-    }
-
-    func changeUA(_ ua: String) {
-        userAgent = ua
-        webView = Self.makeWebView(ua: ua)
-        loadCookies()
-        observeURL()
-        loadInitial()
-    }
-
-    // MARK: URL
 
     func loadInitial() {
         if webView.url == nil {
@@ -97,18 +54,29 @@ class TabSession: ObservableObject, Identifiable {
         webView.publisher(for: \.url)
             .compactMap { $0?.absoluteString }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.currentURL = $0 }
+            .sink { [weak self] url in
+                self?.currentURL = url
+                self?.saveCookies()
+            }
             .store(in: &cancellables)
     }
 
-    // MARK: Cookie
-
+    // --- Cookie Handling ---
     func saveCookies() {
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-            let arr = cookies.compactMap { $0.properties }
-            let url = self.tabDir().appendingPathComponent("cookies.json")
-            if let json = try? JSONSerialization.data(withJSONObject: arr) {
-                try? json.write(to: url)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                let arr = cookies.compactMap { cookie -> [String: Any]? in
+                    var dict = [String: Any]()
+                    for (key, value) in cookie.properties ?? [:] {
+                        dict[key.rawValue] = value
+                    }
+                    return dict
+                }
+                let url = self.tabDir().appendingPathComponent("cookies.json")
+                if let json = try? JSONSerialization.data(withJSONObject: arr) {
+                    try? json.write(to: url)
+                }
             }
         }
     }
@@ -120,34 +88,33 @@ class TabSession: ObservableObject, Identifiable {
         else { return }
 
         let store = webView.configuration.websiteDataStore.httpCookieStore
+        let group = DispatchGroup()
+
         for dict in arr {
-            // [String: Any] を [HTTPCookiePropertyKey: Any] に変換
-            var cookieProps = [HTTPCookiePropertyKey: Any]()
+            var props = [HTTPCookiePropertyKey: Any]()
             for (key, value) in dict {
-                cookieProps[HTTPCookiePropertyKey(rawValue: key)] = value
+                props[HTTPCookiePropertyKey(rawValue: key)] = value
             }
-            
-            if let cookie = HTTPCookie(properties: cookieProps) {
-                store.setCookie(cookie)
+            if let cookie = HTTPCookie(properties: props) {
+                group.enter()
+                store.setCookie(cookie) { group.leave() }
             }
+        }
+        group.notify(queue: .main) {
+            self.webView.reload()
         }
     }
 
     func clearCookies() {
         let store = webView.configuration.websiteDataStore
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-
-        store.fetchDataRecords(ofTypes: types) { records in
-            store.removeData(ofTypes: types, for: records) {
-                DispatchQueue.main.async {
-                    self.webView.reload()
-                }
+        store.fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
+            store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records) {
+                DispatchQueue.main.async { self.webView.reload() }
             }
         }
     }
 
-    // MARK: Memo
-
+    // --- Persistence ---
     func saveMemo() {
         let url = tabDir().appendingPathComponent("memo.txt")
         try? memo.data(using: .utf8)?.write(to: url)
@@ -155,27 +122,21 @@ class TabSession: ObservableObject, Identifiable {
 
     func loadMemo() {
         let url = tabDir().appendingPathComponent("memo.txt")
-        if let data = try? Data(contentsOf: url),
-           let str = String(data: data, encoding: .utf8) {
+        if let data = try? Data(contentsOf: url), let str = String(data: data, encoding: .utf8) {
             memo = str
         }
     }
 
-    // MARK: Path
-
     private func tabDir() -> URL {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let tabs = base.appendingPathComponent("tabs")
-        let dir = tabs.appendingPathComponent("\(id)")
+        let dir = base.appendingPathComponent("tabs").appendingPathComponent("\(id)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 }
 
-// MARK: - ContentView
-
+// MARK: - Main View
 struct ContentView: View {
-
     @State private var active = 0
     @State private var showMemo = false
 
@@ -189,90 +150,62 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-
-            // 🔼 ヘッダー
-            HStack {
-                Button("<") { sessions[active].webView.goBack() }
-                Button(">") { sessions[active].webView.goForward() }
-
-                TextField("URL", text: Binding(
-                    get: { sessions[active].currentURL },
-                    set: { sessions[active].currentURL = $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { loadURL() }
-
-                Button("⟳") { sessions[active].webView.reload() }
-                Button("🗑") { sessions[active].clearCookies() }
-                Button("📝") { showMemo.toggle() }
-
-                Menu("UA") {
-                    Button("iPhone") { sessions[active].changeUA(sessions[0].userAgent) }
-                    Button("iPad") { sessions[active].changeUA(sessions[1].userAgent) }
-                    Button("PC") { sessions[active].changeUA(sessions[2].userAgent) }
-                    Button("Android") { sessions[active].changeUA(sessions[3].userAgent) }
+            // ヘッダー
+            HStack(spacing: 12) {
+                HStack(spacing: 16) {
+                    Button(action: { sessions[active].webView.goBack() }) { Image(systemName: "chevron.left") }
+                    Button(action: { sessions[active].webView.goForward() }) { Image(systemName: "chevron.right") }
+                }
+                TextField("URL", text: Binding(get: { sessions[active].currentURL }, set: { sessions[active].currentURL = $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { loadURL() }
+                HStack(spacing: 16) {
+                    Button(action: { sessions[active].webView.reload() }) { Image(systemName: "arrow.clockwise") }
+                    Button(action: { sessions[active].clearCookies() }) { Image(systemName: "trash") }
+                    Button(action: { showMemo.toggle() }) { Image(systemName: "note.text") }
                 }
             }
-            .padding(8)
-            .background(.ultraThinMaterial)
+            .padding(10).background(.ultraThinMaterial)
 
-            // 🌐 Web
+            // Web表示
             ZStack {
                 ForEach(sessions.indices, id: \.self) { i in
                     WebView(session: sessions[i])
+                        .id(sessions[i].id)
                         .opacity(i == active ? 1 : 0)
+                        .allowsHitTesting(i == active)
                 }
-
                 if showMemo {
                     VStack {
                         Spacer()
-                        TextEditor(text: Binding(
-                            get: { sessions[active].memo },
-                            set: {
-                                sessions[active].memo = $0
-                                sessions[active].saveMemo()
-                            }
-                        ))
-                        .frame(height: 200)
-                        .padding()
-                        .background(Color.yellow.opacity(0.9))
-                        .cornerRadius(10)
-                        .padding()
+                        TextEditor(text: Binding(get: { sessions[active].memo }, set: { sessions[active].memo = $0; sessions[active].saveMemo() }))
+                            .frame(height: 200).padding(8).background(Color(UIColor.secondarySystemBackground)).cornerRadius(12).padding()
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // 🔽 タブ
-            HStack {
+            // タブバー
+            HStack(spacing: 0) {
                 ForEach(sessions.indices, id: \.self) { i in
-                    Button("\(i+1)") {
-                        sessions[active].saveCookies()
-                        sessions[active].saveMemo()
-                        active = i
+                    Button(action: { sessions[active].saveCookies(); sessions[active].saveMemo(); active = i }) {
+                        VStack {
+                            Text("\(i+1)").bold()
+                            Text(["iPhone", "iPad", "PC", "Android", "IE"][i]).font(.system(size: 9))
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(i == active ? Color.blue.opacity(0.15) : Color.clear)
                     }
-                    .frame(maxWidth: .infinity)
-                    .background(i == active ? Color.blue.opacity(0.2) : Color.clear)
                 }
             }
-            .frame(height: 50)
-            .background(.ultraThinMaterial)
+            .frame(height: 60).background(.ultraThinMaterial)
         }
         .ignoresSafeArea(edges: .bottom)
     }
 
     private func loadURL() {
-        let text = sessions[active].currentURL
-        let urlStr: String
-
-        if text.contains(".") {
-            urlStr = text.hasPrefix("http") ? text : "https://\(text)"
-        } else {
-            let q = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            urlStr = "https://duckduckgo.com/?q=\(q)"
-        }
-
-        if let url = URL(string: urlStr) {
-            sessions[active].webView.load(URLRequest(url: url))
-        }
+        let text = sessions[active].currentURL.trimmingCharacters(in: .whitespaces)
+        let urlStr = (text.contains(".") && !text.contains(" ")) ? (text.hasPrefix("http") ? text : "https://\(text)") : "https://duckduckgo.com/?q=\(text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        if let url = URL(string: urlStr) { sessions[active].webView.load(URLRequest(url: url)) }
     }
 }
