@@ -12,21 +12,15 @@ targets:
       - Sources
     settings:
       GENERATE_INFOPLIST_FILE: YES
-      INFOPLIST_KEY_CFBundleDisplayName: "Browser"
-      INFOPLIST_KEY_UILaunchScreen_Generation: YES
-      
-      # 通信許可
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
 
-      # --- エラー回避のためのビルド設定 ---
-      SWIFT_OPTIMIZATION_LEVEL: "-Onone" # 最適化をオフにしてビルドエラーを回避
-      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      # Release設定でもビルドを通すための強制フラグ
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      COMPILER_INDEX_STORE_ENABLE: NO
       
-      # 署名なし実機実行のためのガチガチ設定
+      # 署名なし実機用の決定版
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       AD_HOC_CODE_SIGNING_ALLOWED: YES
-      ENTITLEMENTS_REQUIRED: false
-      DEVELOPMENT_TEAM: ""
