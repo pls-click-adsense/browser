@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Network
 
 struct ContentView: View {
     @State private var proxyHost: String = ""
@@ -8,30 +9,26 @@ struct ContentView: View {
     @State private var loadWebView = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 8) {
-                Text("BBS Final Controller").font(.headline)
-                HStack {
-                    TextField("IP", text: $proxyHost).textFieldStyle(.roundedBorder)
-                    TextField("Port", text: $proxyPort).textFieldStyle(.roundedBorder).frame(width: 70)
-                }
-                HStack {
-                    TextField("URL", text: $targetUrl).textFieldStyle(.roundedBorder)
-                    Button("Go") {
-                        loadWebView = false
-                        // 少し遅延させて再描画を強制する
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            loadWebView = true
-                        }
+        VStack {
+            VStack(spacing: 10) {
+                Text("BBS Stable Browser").font(.headline)
+                TextField("Proxy IP", text: $proxyHost).textFieldStyle(.roundedBorder)
+                TextField("Port", text: $proxyPort).textFieldStyle(.roundedBorder)
+                TextField("Target URL", text: $targetUrl).textFieldStyle(.roundedBorder)
+                Button("Launch Browser") {
+                    loadWebView = false
+                    // 0.2秒待ってから再ロード（クラッシュ防止の魔法）
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        loadWebView = true
                     }
-                    .buttonStyle(.borderedProminent)
                 }
+                .buttonStyle(.borderedProminent)
             }
-            .padding().background(Color(.secondarySystemBackground))
+            .padding()
 
             if loadWebView {
-                // 独自のスキームを使わず、普通のURLを渡す
                 WebViewContainer(urlString: targetUrl, host: proxyHost, port: Int(proxyPort) ?? 8080)
+                    .id(proxyHost + proxyPort) // 設定が変わるたびに作り直す
             } else {
                 Spacer()
             }
@@ -46,21 +43,14 @@ struct WebViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        let store = WKWebsiteDataStore.nonPersistent() // キャッシュを残さないエフェメラル設定
         
-        // iOS 17+ のプロキシ設定を反映させる試み
-        let proxyConfig = [
-            "HTTPEnable": 1,
-            "HTTPProxy": host,
-            "HTTPPort": port,
-            "HTTPSEnable": 1,
-            "HTTPSProxy": host,
-            "HTTPSPort": port,
-            "ProxyAutoConfigEnable": 0
-        ] as [String : Any]
+        // --- iOS正規のプロキシ設定手順 ---
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(integerLiteral: UInt16(port)))
+        let proxyConfig = ProxyConfiguration(httpProxy: endpoint, httpsProxy: endpoint)
         
-        // 内部プロパティへの安全なアクセス
-        store.setValue([proxyConfig], forKey: "_proxyConfigurations")
+        // データストアに適用（これならクラッシュしない！）
+        let store = WKWebsiteDataStore.nonPersistent()
+        store.proxyConfigurations = [proxyConfig]
         config.websiteDataStore = store
         
         let webView = WKWebView(frame: .zero, configuration: config)
