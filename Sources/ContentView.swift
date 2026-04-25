@@ -190,6 +190,11 @@ struct ContentView: View {
             .cornerRadius(10)
             .padding()
             .shadow(radius: 5)
+            // ここから追加：文字が変わるたびに保存する
+            .onChange(of: sessions[active].memo) { newValue in
+                sessions[active].saveMemo()
+            }
+            // ここまで
     }
 
     private func loadURL() {
