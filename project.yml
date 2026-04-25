@@ -9,7 +9,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - MyBBSApp
+      - Sources
     settings:
       # --- ここを追加：Info.plistを自動生成する ---
       GENERATE_INFOPLIST_FILE: YES
