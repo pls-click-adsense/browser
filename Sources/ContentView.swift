@@ -121,7 +121,13 @@ class TabSession: ObservableObject, Identifiable {
 
         let store = webView.configuration.websiteDataStore.httpCookieStore
         for dict in arr {
-            if let cookie = HTTPCookie(properties: dict) {
+            // [String: Any] を [HTTPCookiePropertyKey: Any] に変換
+            var cookieProps = [HTTPCookiePropertyKey: Any]()
+            for (key, value) in dict {
+                cookieProps[HTTPCookiePropertyKey(rawValue: key)] = value
+            }
+            
+            if let cookie = HTTPCookie(properties: cookieProps) {
                 store.setCookie(cookie)
             }
         }
