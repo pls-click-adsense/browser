@@ -8,8 +8,8 @@ targets:
   Browser:
     type: application
     platform: iOS
-    sources:
-      - path: Sources # 👈 辞書形式で明示
+    # 配列形式 [Sources] にすることで、インデント起因のデコードエラーを確実に防ぎます
+    sources: [Sources]
     info:
       plist:
         CFBundleDevelopmentRegion: ja_JP
@@ -18,7 +18,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        UILaunchScreen: {} # 👈 黒帯を消す設定
+        UILaunchScreen: {}
     settings:
       GENERATE_INFOPLIST_FILE: true
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
