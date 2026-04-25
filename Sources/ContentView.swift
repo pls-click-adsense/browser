@@ -11,26 +11,10 @@ struct TabSession: Identifiable {
         self.id = id
         self.userAgent = ua
         let config = WKWebViewConfiguration()
-        
-        // タブごとに固定UUIDで永続ストアを作成
         let uuid = UUID(uuidString: "00000000-0000-0000-0000-00000000000\(id)")!
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
-        
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
-        if let url = URL(string: "https://duckduckgo.com") {
-            self.webView.load(URLRequest(url: url))
-        }
-    }
-    
-    func clearCookies(completion: (() -> Void)? = nil) {
-        let store = webView.configuration.websiteDataStore
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-        store.fetchDataRecords(ofTypes: types) { records in
-            store.removeData(ofTypes: types, for: records) {
-                completion?()
-            }
-        }
     }
 }
 
@@ -40,6 +24,7 @@ struct ContentView: View {
     @State private var showMemo: Bool = false
     @State private var inputURL: String = "https://duckduckgo.com"
     @State private var showClearAlert: Bool = false
+    @State private var didLoad: Bool = false
     @State private var sessions: [TabSession] = [
         TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
         TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
@@ -60,7 +45,6 @@ struct ContentView: View {
                 - footerHeight
 
             VStack(spacing: 0) {
-                // URLバー
                 HStack(spacing: 4) {
                     Button(action: { sessions[activeIndex].webView.goBack() }) {
                         Image(systemName: "chevron.left")
@@ -104,7 +88,6 @@ struct ContentView: View {
                 .frame(height: headerHeight)
                 .background(Color(.systemBackground))
 
-                // WebView
                 ZStack {
                     ForEach(0..<5) { i in
                         if i == activeIndex || i == recentIndex {
@@ -124,7 +107,6 @@ struct ContentView: View {
                 }
                 .frame(width: geo.size.width, height: max(webHeight, 100))
 
-                // タブバー
                 HStack(spacing: 0) {
                     ForEach(0..<5) { i in
                         Button(action: {
@@ -152,9 +134,17 @@ struct ContentView: View {
             .padding(.top, geo.safeAreaInsets.top)
             .padding(.bottom, geo.safeAreaInsets.bottom)
             .ignoresSafeArea()
+            .onAppear {
+                guard !didLoad else { return }
+                didLoad = true
+                // アクティブタブだけ最初にロード、他は切り替え時にロード
+                if let url = URL(string: "https://duckduckgo.com") {
+                    sessions[activeIndex].webView.load(URLRequest(url: url))
+                }
+            }
         }
     }
-
+    
     private func loadURL() {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let path: String
@@ -174,4 +164,16 @@ struct WebViewContainer: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+
+extension TabSession {
+    func clearCookies(completion: (() -> Void)? = nil) {
+        let store = webView.configuration.websiteDataStore
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        store.fetchDataRecords(ofTypes: types) { records in
+            store.removeData(ofTypes: types, for: records) {
+                completion?()
+            }
+        }
+    }
 }
