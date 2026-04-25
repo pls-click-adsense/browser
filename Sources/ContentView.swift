@@ -94,15 +94,10 @@ class TabSession: Identifiable, ObservableObject {
 }
 
 // MARK: - ContentView
+// UIKitのBrowserViewControllerをSwiftUIからラップするだけ
 
 struct ContentView: View {
-    @State private var activeIndex: Int = 0
-    @State private var showMemo: Bool = false
-    @State private var inputURL: String = "https://duckduckgo.com"
-    @State private var isEditingURL: Bool = false
-    @State private var showClearAlert: Bool = false
-
-    let sessions: [TabSession] = [
+    private let sessions: [TabSession] = [
         TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
         TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
         TabSession(id: 3, ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
@@ -111,172 +106,19 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            ForEach(0..<5) { i in
-                WebViewContainer(webView: sessions[i].webView)
-                    .opacity(i == activeIndex ? 1 : 0)
-            }
-            if showMemo {
-                memoOverlay
-            }
-        }
-        // WebViewをフル画面に広げる
-        .ignoresSafeArea()
-        // ヘッダー：backgroundだけノッチ領域まで塗る
-        .safeAreaInset(edge: .top, spacing: 0) {
-            headerView
-                .background(
-                    Color(.systemBackground)
-                        .ignoresSafeArea(edges: .top)
-                )
-        }
-        // フッター：backgroundだけホームインジケーター領域まで塗る
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            footerView
-                .background(
-                    Rectangle()
-                        .fill(Material.thinMaterial)
-                        .ignoresSafeArea(edges: .bottom)
-                )
-        }
-        .onAppear {
-            sessions[0].loadInitialURL()
-        }
-        .onReceive(sessions[activeIndex].$currentURL) { url in
-            if !isEditingURL {
-                inputURL = url
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            for session in sessions {
-                session.saveCookies()
-            }
-        }
-    }
-
-    // MARK: - ヘッダー
-
-    private var headerView: some View {
-        HStack(spacing: 4) {
-            Button(action: { sessions[activeIndex].webView.goBack() }) {
-                Image(systemName: "chevron.left")
-                    .frame(width: 36, height: 44)
-            }
-            Button(action: { sessions[activeIndex].webView.goForward() }) {
-                Image(systemName: "chevron.right")
-                    .frame(width: 36, height: 44)
-            }
-            TextField("Search or URL", text: $inputURL, onEditingChanged: { editing in
-                isEditingURL = editing
-            }, onCommit: {
-                isEditingURL = false
-                loadURL()
-            })
-            .textFieldStyle(RoundedBorderTextFieldStyle())
-            .keyboardType(.URL)
-            .autocapitalization(.none)
-            .disableAutocorrection(true)
-            Button(action: { sessions[activeIndex].webView.reload() }) {
-                Image(systemName: "arrow.clockwise")
-                    .frame(width: 36, height: 44)
-            }
-            Button(action: { showClearAlert = true }) {
-                Image(systemName: "trash")
-                    .foregroundColor(.red)
-                    .frame(width: 36, height: 44)
-            }
-            .alert("クッキーを削除", isPresented: $showClearAlert) {
-                Button("削除", role: .destructive) {
-                    sessions[activeIndex].clearCookies {
-                        DispatchQueue.main.async {
-                            sessions[activeIndex].loadInitialURL()
-                            inputURL = "https://duckduckgo.com"
-                        }
-                    }
-                }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                Text("タブ\(activeIndex + 1)のクッキーと履歴を削除します")
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 52)
-    }
-
-    // MARK: - メモオーバーレイ
-
-    private var memoOverlay: some View {
-        TextEditor(text: sessions[activeIndex].memoBinding)
-            .frame(width: 250, height: 200)
-            .background(Color.yellow.opacity(0.9))
-            .cornerRadius(10)
-            .padding()
-    }
-
-    // MARK: - フッター
-
-    private var footerView: some View {
-        HStack(spacing: 0) {
-            ForEach(0..<5) { i in
-                Button(action: { switchTab(to: i) }) {
-                    Text("\(i + 1)")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(activeIndex == i ? Color.blue.opacity(0.2) : Color.clear)
-                }
-            }
-            Button(action: { showMemo.toggle() }) {
-                Image(systemName: "note.text")
-                    .frame(width: 52, height: 52)
-                    .foregroundColor(showMemo ? .orange : .primary)
-            }
-        }
-    }
-
-    // MARK: - タブ切り替え
-
-    private func switchTab(to index: Int) {
-        sessions[activeIndex].saveCookies()
-        activeIndex = index
-        inputURL = sessions[index].currentURL
-        if sessions[index].webView.url == nil {
-            sessions[index].loadInitialURL()
-        }
-    }
-
-    // MARK: - URL読み込み
-
-    private func loadURL() {
-        let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let path: String
-        if trimmed.contains(".") && !trimmed.contains(" ") {
-            path = trimmed.hasPrefix("http") ? trimmed : "https://\(trimmed)"
-        } else {
-            let query = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            path = "https://duckduckgo.com/?q=\(query)"
-        }
-        if let url = URL(string: path) {
-            sessions[activeIndex].webView.load(URLRequest(url: url))
-        }
+        BrowserViewControllerRepresentable(sessions: sessions)
+            .ignoresSafeArea()
     }
 }
 
-// MARK: - TabSession メモバインディング拡張
+// MARK: - UIViewControllerRepresentable
 
-extension TabSession {
-    var memoBinding: Binding<String> {
-        Binding(
-            get: { self.memo },
-            set: { self.memo = $0 }
-        )
+struct BrowserViewControllerRepresentable: UIViewControllerRepresentable {
+    let sessions: [TabSession]
+
+    func makeUIViewController(context: Context) -> BrowserViewController {
+        BrowserViewController(sessions: sessions)
     }
-}
 
-// MARK: - WebViewContainer
-
-struct WebViewContainer: UIViewRepresentable {
-    let webView: WKWebView
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIViewController(_ uiViewController: BrowserViewController, context: Context) {}
 }
