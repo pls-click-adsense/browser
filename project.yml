@@ -15,16 +15,13 @@ targets:
       INFOPLIST_KEY_CFBundleDisplayName: "Browser"
       INFOPLIST_KEY_UILaunchScreen_Generation: YES
       
-      # --- ここを追加：独自スキームの登録 ---
-      INFOPLIST_KEY_CFBundleURLTypes:
-        - CFBundleURLSchemes:
-            - myproxy
-          CFBundleURLName: "Custom Proxy Scheme"
-      # -----------------------------------
-
+      # 独自スキームの登録(CFBundleURLTypes)は不要になったので削除
+      
+      # HTTP/HTTPSの制限を解除（プロキシ通信に必須）
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
 
+      # 実機ビルド用の設定（署名なし）
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
