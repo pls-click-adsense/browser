@@ -134,7 +134,8 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footerView
                 .background(
-                    Material.thinMaterial
+                    Rectangle()
+                        .fill(Material.thinMaterial)
                         .ignoresSafeArea(edges: .bottom)
                 )
         }
