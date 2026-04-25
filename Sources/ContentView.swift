@@ -1,34 +1,25 @@
 import SwiftUI
 import WebKit
-import Swifter
 
-// --- メイン画面 ---
 struct ContentView: View {
-    @StateObject private var proxyController = SingleProxyController()
-    
     @State private var proxyHost: String = ""
     @State private var proxyPort: String = ""
-    @State private var targetUrl: String = "http://example.com"
-    @State private var tab2Url: URL = URL(string: "about:blank")!
+    @State private var targetUrl: String = "google.com"
+    @State private var tab2Url: URL?
 
     var body: some View {
         VStack(spacing: 0) {
-            // 設定エリア
             VStack(spacing: 8) {
-                Text("Proxy Control Panel").font(.headline)
+                Text("Custom Scheme Proxy").font(.headline)
                 HStack {
-                    TextField("Proxy Host", text: $proxyHost)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Port", text: $proxyPort)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
+                    TextField("Proxy Host", text: $proxyHost).textFieldStyle(.roundedBorder)
+                    TextField("Port", text: $proxyPort).textFieldStyle(.roundedBorder).frame(width: 70)
                 }
                 HStack {
-                    TextField("Target URL", text: $targetUrl)
-                        .textFieldStyle(.roundedBorder)
+                    TextField("Target (e.g. google.com)", text: $targetUrl).textFieldStyle(.roundedBorder)
                     Button("Go") {
-                        proxyController.updateConfig(host: proxyHost, port: Int(proxyPort) ?? 8080)
-                        tab2Url = URL(string: "http://localhost:8081/fetch?url=\(targetUrl)")!
+                        // httpsを独自スキームに置換してロード
+                        tab2Url = URL(string: "proxy-https://\(targetUrl)")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -36,88 +27,85 @@ struct ContentView: View {
             .padding()
             .background(Color(.secondarySystemBackground))
 
-            // 2タブ同時表示
             VStack(spacing: 0) {
-                // タブ1: 直通
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(" 🌐 Tab 1: Direct (No Proxy)").font(.caption2).bold()
-                    WebViewContainer(url: URL(string: "https://www.google.com")!)
-                }
-                .border(Color.gray, width: 1)
-
+                Text("🌐 Tab 1: Direct").font(.caption2).bold()
+                WebViewContainer(url: URL(string: "https://www.google.com")!, proxyConfig: nil)
+                
                 Divider().frame(height: 5).background(Color.black)
-
-                // タブ2: プロキシ経由
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(" 🛡️ Tab 2: Proxy Route").font(.caption2).bold().foregroundColor(.blue)
-                    WebViewContainer(url: tab2Url)
+                
+                Text("🛡️ Tab 2: Proxy Scheme").font(.caption2).bold().foregroundColor(.blue)
+                if let url = tab2Url {
+                    WebViewContainer(url: url, proxyConfig: (host: proxyHost, port: Int(proxyPort) ?? 8080))
+                } else {
+                    Spacer()
                 }
-                .border(Color.blue, width: 2)
             }
-        }
-        .onAppear {
-            proxyController.startServer()
         }
     }
 }
 
-// --- プロキシ中継サーバー ---
-class SingleProxyController: ObservableObject {
-    private let server = HttpServer()
-    private var currentHost: String = ""
-    private var currentPort: Int = 8080
-    
-    func updateConfig(host: String, port: Int) {
-        self.currentHost = host
-        self.currentPort = port
+// --- プロキシ通信を肩代わりするハンドラ ---
+class ProxySchemeHandler: NSObject, WKURLSchemeHandler {
+    let session: URLSession
+
+    init(host: String, port: Int) {
+        let config = URLSessionConfiguration.ephemeral
+        config.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable: 1,
+            kCFNetworkProxiesHTTPProxy: host,
+            kCFNetworkProxiesHTTPPort: port,
+            kCFNetworkProxiesHTTPSEnable: 1,
+            kCFNetworkProxiesHTTPSProxy: host,
+            kCFNetworkProxiesHTTPSPort: port
+        ]
+        self.session = URLSession(configuration: config)
     }
-    
-    func startServer() {
-        server["/fetch"] = { [weak self] request in
-            guard let self = self,
-                  let urlString = request.queryParams.first(where: { $0.0 == "url" })?.1,
-                  let targetUrl = URL(string: urlString) else {
-                return .badRequest(nil)
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url,
+              let originalSchemeUrl = url.absoluteString.replacingOccurrences(of: "proxy-", with: "").url else { return }
+        
+        var request = URLRequest(url: originalSchemeUrl)
+        request.httpMethod = urlSchemeTask.request.httpMethod
+        
+        session.dataTask(with: request) { data, response, error in
+            if let response = response {
+                urlSchemeTask.didReceive(response)
             }
-            
-            let config = URLSessionConfiguration.ephemeral
-            if !self.currentHost.isEmpty {
-                config.connectionProxyDictionary = [
-                    kCFNetworkProxiesHTTPEnable: 1,
-                    kCFNetworkProxiesHTTPProxy: self.currentHost,
-                    kCFNetworkProxiesHTTPPort: self.currentPort
-                ]
+            if let data = data {
+                urlSchemeTask.didReceive(data)
             }
-            
-            let session = URLSession(configuration: config)
-            var responseData: Data?
-            let semaphore = DispatchSemaphore(value: 0)
-            
-            session.dataTask(with: targetUrl) { data, _, _ in
-                responseData = data
-                semaphore.signal()
-            }.resume()
-            
-            _ = semaphore.wait(timeout: .now() + 15)
-            
-            if let data = responseData {
-                return .ok(.data(data))
+            if let error = error {
+                urlSchemeTask.didFailWithError(error)
+            } else {
+                urlSchemeTask.didFinish()
             }
-            return .internalServerError
-        }
-        try? server.start(8081)
+        }.resume()
     }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
 // --- WebViewラッパー ---
 struct WebViewContainer: UIViewRepresentable {
     let url: URL
+    let proxyConfig: (host: String, port: Int)?
+
     func makeUIView(context: Context) -> WKWebView {
-        let view = WKWebView()
-        view.allowsBackForwardNavigationGestures = true
-        return view
+        let config = WKWebViewConfiguration()
+        // プロキシ設定がある場合のみ、ハンドラを登録
+        if let proxy = proxyConfig {
+            config.setURLSchemeHandler(ProxySchemeHandler(host: proxy.host, port: proxy.port), forURLScheme: "proxy-https")
+        }
+        let webView = WKWebView(frame: .zero, configuration: config)
+        return webView
     }
+
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.load(URLRequest(url: url))
     }
+}
+
+extension String {
+    var url: URL? { URL(string: self) }
 }
