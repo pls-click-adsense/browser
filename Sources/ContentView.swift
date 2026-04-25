@@ -1,181 +1,123 @@
-import Foundation
-import UIKit
 import SwiftUI
 import WebKit
-import Network
+import Swifter
 
-// MARK: - Tabモデル
-class Tab: Identifiable, ObservableObject {
-    let id = UUID()
-    let webView: WKWebView
-
-    init(ua: String, proxyHost: String?, proxyPort: String?) {
-        let config = WKWebViewConfiguration()
-
-        // タブごとに分離（重要）
-        config.processPool = WKProcessPool()
-
-        // 永続ストア
-        let store = WKWebsiteDataStore.default()
-
-        // Proxy（iOS17+）
-        if let host = proxyHost,
-           let portStr = proxyPort,
-           let portInt = Int(portStr),
-           let port = NWEndpoint.Port(rawValue: UInt16(portInt)) {
-
-            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: port)
-            let proxy = ProxyConfiguration(httpCONNECTProxy: endpoint)
-            store.proxyConfigurations = [proxy]
-        }
-
-        config.websiteDataStore = store
-
-        let wv = WKWebView(frame: .zero, configuration: config)
-        wv.customUserAgent = ua
-
-        self.webView = wv
-    }
-}
-
-// MARK: - タブ管理
-class TabManager: ObservableObject {
-    @Published var tabs: [Tab] = []
-    @Published var selectedIndex: Int = 0
-
-    let userAgents: [String] = [
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)...",
-        "Mozilla/5.0 (Linux; Android 13; Pixel 7)...",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0)...",
-        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)..."
-    ]
-
-    @Published var proxyHost: String = ""
-    @Published var proxyPort: String = ""
-
-    init() {
-        loadProxy()
-        addTab()
-    }
-
-    func addTab() {
-        let tab = Tab(
-            ua: userAgents[0],
-            proxyHost: proxyHost.isEmpty ? nil : proxyHost,
-            proxyPort: proxyPort.isEmpty ? nil : proxyPort
-        )
-        tabs.append(tab)
-        selectedIndex = tabs.count - 1
-    }
-
-    func closeTab(index: Int) {
-        guard tabs.indices.contains(index) else { return }
-        tabs.remove(at: index)
-        selectedIndex = max(0, selectedIndex - 1)
-    }
-
-    func currentTab() -> Tab? {
-        guard tabs.indices.contains(selectedIndex) else { return nil }
-        return tabs[selectedIndex]
-    }
-
-    func load(url: String) {
-        guard let u = URL(string: url),
-              let tab = currentTab() else { return }
-        tab.webView.load(URLRequest(url: u))
-    }
-
-    // Proxy保存
-    func saveProxy() {
-        UserDefaults.standard.set(proxyHost, forKey: "proxyHost")
-        UserDefaults.standard.set(proxyPort, forKey: "proxyPort")
-    }
-
-    func loadProxy() {
-        proxyHost = UserDefaults.standard.string(forKey: "proxyHost") ?? ""
-        proxyPort = UserDefaults.standard.string(forKey: "proxyPort") ?? ""
-    }
-
-    // Cookie削除（全体）
-    func clearAllCookies() {
-        let store = WKWebsiteDataStore.default()
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-
-        store.fetchDataRecords(ofTypes: types) { records in
-            store.removeData(ofTypes: types, for: records, completionHandler: {})
-        }
-    }
-}
-
-// MARK: - WebView Wrapper
-struct WebView: UIViewRepresentable {
-    let webView: WKWebView
-
-    func makeUIView(context: Context) -> WKWebView {
-        return webView
-    }
-
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
-}
-
-// MARK: - UI
+// --- メイン画面 ---
 struct ContentView: View {
-    @StateObject var manager = TabManager()
-    @State private var urlString = "https://example.com"
+    @StateObject private var proxyController = SingleProxyController()
+    
+    @State private var proxyHost: String = ""
+    @State private var proxyPort: String = ""
+    @State private var targetUrl: String = "http://example.com"
+    @State private var tab2Url: URL = URL(string: "about:blank")!
 
     var body: some View {
-        VStack {
-
-            // URLバー
-            HStack {
-                TextField("URL", text: $urlString)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                Button("Go") {
-                    manager.load(url: urlString)
+        VStack(spacing: 0) {
+            // 設定エリア
+            VStack(spacing: 8) {
+                Text("Proxy Control Panel").font(.headline)
+                HStack {
+                    TextField("Proxy Host", text: $proxyHost)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Port", text: $proxyPort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 70)
                 }
-
-                Button("+Tab") {
-                    manager.addTab()
+                HStack {
+                    TextField("Target URL", text: $targetUrl)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Go") {
+                        proxyController.updateConfig(host: proxyHost, port: Int(proxyPort) ?? 8080)
+                        tab2Url = URL(string: "http://localhost:8081/fetch?url=\(targetUrl)")!
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
+            .padding()
+            .background(Color(.secondarySystemBackground))
 
-            // タブ一覧
-            ScrollView(.horizontal) {
-    HStack {
-        ForEach(manager.tabs.indices, id: \\.self) { i in
-            Button("Tab \\(i)") {
-                manager.selectedIndex = i
+            // 2タブ同時表示
+            VStack(spacing: 0) {
+                // タブ1: 直通
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(" 🌐 Tab 1: Direct (No Proxy)").font(.caption2).bold()
+                    WebViewContainer(url: URL(string: "https://www.google.com")!)
+                }
+                .border(Color.gray, width: 1)
+
+                Divider().frame(height: 5).background(Color.black)
+
+                // タブ2: プロキシ経由
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(" 🛡️ Tab 2: Proxy Route").font(.caption2).bold().foregroundColor(.blue)
+                    WebViewContainer(url: tab2Url)
+                }
+                .border(Color.blue, width: 2)
             }
+        }
+        .onAppear {
+            proxyController.startServer()
         }
     }
 }
 
-            // Proxy設定
-            HStack {
-                TextField("Proxy Host", text: $manager.proxyHost)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                TextField("Port", text: $manager.proxyPort)
-                    .frame(width: 80)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                Button("Save Proxy") {
-                    manager.saveProxy()
-                }
+// --- プロキシ中継サーバー ---
+class SingleProxyController: ObservableObject {
+    private let server = HttpServer()
+    private var currentHost: String = ""
+    private var currentPort: Int = 8080
+    
+    func updateConfig(host: String, port: Int) {
+        self.currentHost = host
+        self.currentPort = port
+    }
+    
+    func startServer() {
+        server["/fetch"] = { [weak self] request in
+            guard let self = self,
+                  let urlString = request.queryParams.first(where: { $0.0 == "url" })?.1,
+                  let targetUrl = URL(string: urlString) else {
+                return .badRequest(nil)
             }
-
-            // Cookie削除
-            Button("Clear Cookies") {
-                manager.clearAllCookies()
+            
+            let config = URLSessionConfiguration.ephemeral
+            if !self.currentHost.isEmpty {
+                config.connectionProxyDictionary = [
+                    kCFNetworkProxiesHTTPEnable: 1,
+                    kCFNetworkProxiesHTTPProxy: self.currentHost,
+                    kCFNetworkProxiesHTTPPort: self.currentPort
+                ]
             }
-
-            // WebView
-            if let tab = manager.currentTab() {
-                WebView(webView: tab.webView)
+            
+            let session = URLSession(configuration: config)
+            var responseData: Data?
+            let semaphore = DispatchSemaphore(value: 0)
+            
+            session.dataTask(with: targetUrl) { data, _, _ in
+                responseData = data
+                semaphore.signal()
+            }.resume()
+            
+            _ = semaphore.wait(timeout: .now() + 15)
+            
+            if let data = responseData {
+                return .ok(.data(data))
             }
+            return .internalServerError
         }
-        .padding()
+        try? server.start(8081)
+    }
+}
+
+// --- WebViewラッパー ---
+struct WebViewContainer: UIViewRepresentable {
+    let url: URL
+    func makeUIView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.allowsBackForwardNavigationGestures = true
+        return view
+    }
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.load(URLRequest(url: url))
     }
 }
