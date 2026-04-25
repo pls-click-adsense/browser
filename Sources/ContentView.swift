@@ -108,12 +108,12 @@ struct ContentView: View {
     @State private var showMemo = false
     @State private var showingDeleteConfirm = false
     @State private var sessions: [TabSession] = [
-        TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
-        TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
-        TabSession(id: 3, ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
-        TabSession(id: 4, ua: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"),
-        TabSession(id: 5, ua: "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
-    ]
+    TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.4 Mobile/15E148 Safari/604.1"), // Safari
+    TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 19_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.4 Mobile/15E148 Safari/604.1"),  // iPad
+    TabSession(id: 3, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/148.0.0.0 Mobile/15E148 Safari/604.1"), // iPhone Chrome
+    TabSession(id: 4, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/150.0 Mobile/15E148 Safari/605.1.15"),  // iPhone Firefox
+    TabSession(id: 5, ua: "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)") // IE
+]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -173,7 +173,7 @@ struct ContentView: View {
                 Button(action: { active = i }) {
                     VStack(spacing: 4) {
                         Text("\(i+1)").bold()
-                        Text(["iPhone", "iPad", "PC", "Android", "IE"][i]).font(.system(size: 8))
+                        Text(["iPhone", "iPad", "chrome", "firefox", "IE"][i]).font(.system(size: 8))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
