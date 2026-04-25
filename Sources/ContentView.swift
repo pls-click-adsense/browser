@@ -1,7 +1,6 @@
 import SwiftUI
 import WebKit
 
-// MARK: - TabSession
 struct TabSession: Identifiable {
     let id: Int
     let userAgent: String
@@ -11,9 +10,8 @@ struct TabSession: Identifiable {
     init(id: Int, ua: String) {
         self.id = id
         self.userAgent = ua
-        let store = WKWebsiteDataStore.nonPersistent()
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = store
+        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
         if let url = URL(string: "https://www.google.com") {
@@ -22,7 +20,6 @@ struct TabSession: Identifiable {
     }
 }
 
-// MARK: - Main View
 struct ContentView: View {
     @State private var activeIndex: Int = 0
     @State private var recentIndex: Int = 0
@@ -38,119 +35,77 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerArea
-            
+            // Header
+            HStack(spacing: 8) {
+                Button(action: { sessions[activeIndex].webView.goBack() }) {
+                    Image(systemName: "chevron.left")
+                }.frame(width: 44, height: 44)
+                
+                TextField("URL", text: $inputURL, onCommit: loadURL)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                
+                Button(action: { sessions[activeIndex].webView.reload() }) {
+                    Image(systemName: "arrow.clockwise")
+                }.frame(width: 44, height: 44)
+            }
+            .padding(.horizontal)
+            .background(Color(.systemBackground))
+
+            // Main
             ZStack {
-                mainBrowserArea
+                ForEach(0..<5) { i in
+                    if i == activeIndex || i == recentIndex {
+                        WebViewContainer(webView: sessions[i].webView)
+                            .opacity(i == activeIndex ? 1 : 0)
+                    }
+                }
+                
                 if showMemo {
-                    memoOverlayArea
+                    TextEditor(text: $sessions[activeIndex].memo)
+                        .frame(width: 250, height: 200)
+                        .background(Color.yellow)
+                        .cornerRadius(10)
+                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            // Footer
+            HStack(spacing: 0) {
+                ForEach(0..<5) { i in
+                    Button(action: { 
+                        recentIndex = activeIndex
+                        activeIndex = i 
+                        inputURL = sessions[i].webView.url?.absoluteString ?? ""
+                    }) {
+                        Text("\(i + 1)")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 60)
+                            .background(activeIndex == i ? Color.blue.opacity(0.2) : Color.clear)
+                    }
+                }
+                
+                Button(action: { showMemo.toggle() }) {
+                    Image(systemName: "note.text")
+                        .frame(width: 60, height: 60)
+                        .foregroundColor(showMemo ? .orange : .primary)
+                }
+            }
+            .background(Color(.systemGroupedBackground))
             
-            footerArea
+            // 下部の余白（SafeArea対策を最もシンプルに）
+            Color(.systemGroupedBackground)
+                .frame(height: 34) 
         }
         .edgesIgnoringSafeArea(.bottom)
     }
 
-    // --- 各パーツを型指定した変数に切り出すことでコンパイラを助ける ---
-
-    @ViewBuilder
-    private var headerArea: some View {
-        HStack(spacing: 8) {
-            Button(action: { sessions[activeIndex].webView.goBack() }) {
-                Image(systemName: "chevron.left").font(.headline)
-            }.frame(width: 44, height: 44)
-            
-            TextField("URL", text: $inputURL, onCommit: loadURL)
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .autocapitalization(.none)
-            
-            Button(action: { sessions[activeIndex].webView.reload() }) {
-                Image(systemName: "arrow.clockwise")
-            }.frame(width: 44, height: 44)
-        }
-        .padding(.horizontal, 10)
-        .background(Color(.systemBackground))
-    }
-
-    @ViewBuilder
-    private var mainBrowserArea: some View {
-        ForEach(0..<5, id: \.self) { index in
-            if index == activeIndex || index == recentIndex {
-                WebViewContainer(webView: sessions[index].webView)
-                    .opacity(index == activeIndex ? 1 : 0)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var footerArea: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(0..<5, id: \.self) { index in
-                    tabButton(for: index)
-                }
-                memoToggleButton
-            }
-            Color.clear.frame(height: safeAreaBottom)
-        }
-        .background(Color(.systemGroupedBackground))
-    }
-
-    @ViewBuilder
-    private func tabButton(for index: Int) -> some View {
-        Button(action: { switchTab(to: index) }) {
-            VStack(spacing: 4) {
-                Text("\(index + 1)").font(.system(size: 20, weight: .bold))
-                Circle()
-                    .fill(activeIndex == index ? Color.blue : (recentIndex == index ? Color.blue.opacity(0.3) : Color.clear))
-                    .frame(width: 6, height: 6)
-            }
-            .frame(maxWidth: .infinity, height: 60)
-            .background(activeIndex == index ? Color.blue.opacity(0.1) : Color.clear)
-        }
-    }
-
-    @ViewBuilder
-    private var memoToggleButton: some View {
-        Button(action: { showMemo.toggle() }) {
-            Image(systemName: "note.text")
-                .font(.system(size: 20))
-                .frame(width: 60, height: 60)
-                .foregroundColor(showMemo ? .orange : .primary)
-        }
-    }
-
-    @ViewBuilder
-    private var memoOverlayArea: some View {
-        VStack {
-            TextEditor(text: $sessions[activeIndex].memo)
-                .padding(8)
-                .background(Color(.systemYellow).opacity(0.9))
-                .cornerRadius(12)
-                .frame(width: 280, height: 200)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(.bottom, 80).padding(.trailing, 20)
-    }
-
-    // MARK: - Helpers
-    private func switchTab(to index: Int) {
-        recentIndex = activeIndex
-        activeIndex = index
-        inputURL = sessions[activeIndex].webView.url?.absoluteString ?? ""
-    }
-
     private func loadURL() {
-        let str = inputURL.lowercased().hasPrefix("http") ? inputURL : "https://\(inputURL)"
-        if let url = URL(string: str) {
+        let path = inputURL.hasPrefix("http") ? inputURL : "https://\(inputURL)"
+        if let url = URL(string: path) {
             sessions[activeIndex].webView.load(URLRequest(url: url))
         }
-    }
-
-    private var safeAreaBottom: CGFloat {
-        (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.safeAreaInsets.bottom ?? 0
     }
 }
 
