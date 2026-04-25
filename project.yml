@@ -18,9 +18,8 @@ targets:
       # --- ここを追加：独自スキームの登録 ---
       INFOPLIST_KEY_CFBundleURLTypes:
         - CFBundleURLSchemes:
-            - proxy-https
-            - proxy-http
-          CFBundleURLName: "Proxy Scheme"
+            - myproxy
+          CFBundleURLName: "Custom Proxy Scheme"
       # -----------------------------------
 
       INFOPLIST_KEY_NSAppTransportSecurity:
