@@ -14,11 +14,9 @@ targets:
       GENERATE_INFOPLIST_FILE: YES
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-      # --- 比率がおかしくなるのを防ぐ決定的な設定 ---
-      INFOPLIST_KEY_UILaunchScreen:
-        # 空のディクショナリを指定することで「標準の起動画面」を使用させ、
-        # アプリを全画面（ネイティブ解像度）で動かすように指示する
-        {}: 
+      # 比率問題を解決するための「安全な」記述
+      # 空の辞書を渡すことで、標準の LaunchScreen を有効化します
+      INFOPLIST_KEY_UILaunchScreen: {}
 
       # 日本語設定
       INFOPLIST_KEY_CFBundleDevelopmentRegion: "ja_JP"
@@ -33,3 +31,5 @@ targets:
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       AD_HOC_CODE_SIGNING_ALLOWED: YES
+
+      COMPILER_INDEX_STORE_ENABLE: YES
