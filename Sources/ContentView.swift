@@ -2,41 +2,19 @@ import SwiftUI
 import WebKit
 import Combine
 
-// MARK: - CookieStore
+// MARK: - WebView
 
-class CookieStore {
-    static func save(tabId: Int, cookies: [HTTPCookie]) {
-        let data = cookies.compactMap { cookie -> [String: Any]? in
-            var dict: [String: Any] = [:]
-            for (key, value) in cookie.properties ?? [:] {
-                dict[key.rawValue] = value
-            }
-            return dict
-        }
-        UserDefaults.standard.set(data, forKey: "cookies_tab_\(tabId)")
-    }
+struct WebView: UIViewRepresentable {
+    let webView: WKWebView
 
-    static func load(tabId: Int) -> [HTTPCookie] {
-        guard let data = UserDefaults.standard.array(forKey: "cookies_tab_\(tabId)") as? [[String: Any]] else {
-            return []
-        }
-        return data.compactMap { dict in
-            HTTPCookie(properties: Dictionary(uniqueKeysWithValues: dict.map {
-                (HTTPCookiePropertyKey($0.key), $0.value)
-            }))
-        }
-    }
-
-    static func clear(tabId: Int) {
-        UserDefaults.standard.removeObject(forKey: "cookies_tab_\(tabId)")
-    }
+    func makeUIView(context: Context) -> WKWebView { webView }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
 // MARK: - TabSession
 
-class TabSession: Identifiable, ObservableObject {
+class TabSession: ObservableObject, Identifiable {
     let id: Int
-    let userAgent: String
     let webView: WKWebView
 
     @Published var currentURL: String = "https://duckduckgo.com"
@@ -46,19 +24,18 @@ class TabSession: Identifiable, ObservableObject {
 
     init(id: Int, ua: String) {
         self.id = id
-        self.userAgent = ua
 
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
-        self.webView = WKWebView(frame: .zero, configuration: config)
-        self.webView.customUserAgent = ua
 
-        let cookies = CookieStore.load(tabId: id)
-        let cookieStore = config.websiteDataStore.httpCookieStore
-        for cookie in cookies {
-            cookieStore.setCookie(cookie) {}
-        }
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.customUserAgent = ua
+        self.webView = wv
 
+        // 🔹 メモ読み込み
+        self.memo = UserDefaults.standard.string(forKey: "memo_\(id)") ?? ""
+
+        // URL監視
         webView.publisher(for: \.url)
             .compactMap { $0?.absoluteString }
             .receive(on: DispatchQueue.main)
@@ -68,57 +45,125 @@ class TabSession: Identifiable, ObservableObject {
             .store(in: &cancellables)
     }
 
-    func saveCookies(completion: (() -> Void)? = nil) {
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-            CookieStore.save(tabId: self.id, cookies: cookies)
-            completion?()
+    func loadInitial() {
+        if webView.url == nil {
+            webView.load(URLRequest(url: URL(string: "https://duckduckgo.com")!))
         }
     }
 
-    func clearCookies(completion: (() -> Void)? = nil) {
-        CookieStore.clear(tabId: id)
-        let store = webView.configuration.websiteDataStore
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-        store.fetchDataRecords(ofTypes: types) { records in
-            store.removeData(ofTypes: types, for: records) {
-                completion?()
-            }
-        }
-    }
-
-    func loadInitialURL() {
-        if let url = URL(string: "https://duckduckgo.com") {
-            webView.load(URLRequest(url: url))
-        }
+    func saveMemo() {
+        UserDefaults.standard.set(memo, forKey: "memo_\(id)")
     }
 }
 
 // MARK: - ContentView
-// UIKitのBrowserViewControllerをSwiftUIからラップするだけ
 
 struct ContentView: View {
+
+    @State private var activeIndex = 0
+    @State private var showMemo = false
+
     private let sessions: [TabSession] = [
-        TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
-        TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
-        TabSession(id: 3, ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
-        TabSession(id: 4, ua: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"),
-        TabSession(id: 5, ua: "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
+        TabSession(id: 1, ua: "Mozilla/5.0 (iPhone...)"),
+        TabSession(id: 2, ua: "Mozilla/5.0 (iPad...)"),
+        TabSession(id: 3, ua: "Mozilla/5.0 (Mac...)"),
+        TabSession(id: 4, ua: "Mozilla/5.0 (Android...)"),
+        TabSession(id: 5, ua: "Mozilla/5.0 (MSIE...)")
     ]
 
     var body: some View {
-        BrowserViewControllerRepresentable(sessions: sessions)
-            .ignoresSafeArea()
+        VStack(spacing: 0) {
+
+            // 🔼 ヘッダー
+            HStack {
+                Button("<") {
+                    sessions[activeIndex].webView.goBack()
+                }
+
+                Button(">") {
+                    sessions[activeIndex].webView.goForward()
+                }
+
+                TextField("URL", text: Binding(
+                    get: { sessions[activeIndex].currentURL },
+                    set: { sessions[activeIndex].currentURL = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    loadURL(sessions[activeIndex].currentURL)
+                }
+
+                Button("⟳") {
+                    sessions[activeIndex].webView.reload()
+                }
+
+                Button("📝") {
+                    showMemo.toggle()
+                }
+            }
+            .padding(8)
+            .background(.ultraThinMaterial)
+
+            // 🌐 Web
+            ZStack {
+                ForEach(sessions.indices, id: \.self) { i in
+                    WebView(webView: sessions[i].webView)
+                        .opacity(i == activeIndex ? 1 : 0)
+                }
+
+                // 📝 メモ
+                if showMemo {
+                    VStack {
+                        Spacer()
+                        TextEditor(text: Binding(
+                            get: { sessions[activeIndex].memo },
+                            set: {
+                                sessions[activeIndex].memo = $0
+                                sessions[activeIndex].saveMemo() // ←保存
+                            }
+                        ))
+                        .frame(height: 200)
+                        .padding()
+                        .background(Color.yellow.opacity(0.9))
+                        .cornerRadius(10)
+                        .padding()
+                    }
+                }
+            }
+
+            // 🔽 タブ
+            HStack {
+                ForEach(sessions.indices, id: \.self) { i in
+                    Button("\(i+1)") {
+                        activeIndex = i
+                        sessions[i].loadInitial()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .background(i == activeIndex ? Color.blue.opacity(0.2) : Color.clear)
+                }
+            }
+            .frame(height: 50)
+            .background(.ultraThinMaterial)
+        }
+        .ignoresSafeArea(edges: .bottom)
+        .onAppear {
+            sessions[0].loadInitial()
+        }
     }
-}
 
-// MARK: - UIViewControllerRepresentable
+    private func loadURL(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let urlString: String
 
-struct BrowserViewControllerRepresentable: UIViewControllerRepresentable {
-    let sessions: [TabSession]
+        if trimmed.contains(".") {
+            urlString = trimmed.hasPrefix("http") ? trimmed : "https://\(trimmed)"
+        } else {
+            let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            urlString = "https://duckduckgo.com/?q=\(q)"
+        }
 
-    func makeUIViewController(context: Context) -> BrowserViewController {
-        BrowserViewController(sessions: sessions)
+        if let url = URL(string: urlString) {
+            sessions[activeIndex].webView.load(URLRequest(url: url))
+        }
     }
-
-    func updateUIViewController(_ uiViewController: BrowserViewController, context: Context) {}
 }
