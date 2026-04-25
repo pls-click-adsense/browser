@@ -11,7 +11,11 @@ struct TabSession: Identifiable {
         self.id = id
         self.userAgent = ua
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
+        
+        // タブごとに固定UUIDで永続ストアを作成
+        let uuid = UUID(uuidString: "00000000-0000-0000-0000-00000000000\(id)")!
+        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
+        
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
         if let url = URL(string: "https://duckduckgo.com") {
@@ -75,7 +79,6 @@ struct ContentView: View {
                         Image(systemName: "arrow.clockwise")
                     }.frame(width: 36, height: headerHeight)
                     
-                    // クッキー削除ボタン
                     Button(action: { showClearAlert = true }) {
                         Image(systemName: "trash")
                             .foregroundColor(.red)
