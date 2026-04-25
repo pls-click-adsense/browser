@@ -9,7 +9,7 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Sources # 👈 ここはリスト形式でフォルダ名だけでOK
+      - path: Sources # 👈 辞書形式で明示
     info:
       plist:
         CFBundleDevelopmentRegion: ja_JP
@@ -18,7 +18,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        UILaunchScreen: {} # 👈 これが黒帯（互換モード）を解除するスイッチ
+        UILaunchScreen: {} # 👈 黒帯を消す設定
     settings:
       GENERATE_INFOPLIST_FILE: true
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
