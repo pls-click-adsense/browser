@@ -9,16 +9,13 @@ targets:
     platform: iOS
     sources:
       - Sources
-    info:
-      path: Sources/Info.plist
-      properties:
-        CFBundleDevelopmentRegion: "ja_JP"
-        CFBundleDisplayName: "Browser"
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
-        UILaunchScreen: {}
     settings:
+      GENERATE_INFOPLIST_FILE: YES
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      INFOPLIST_KEY_CFBundleDevelopmentRegion: "ja_JP"
+      INFOPLIST_KEY_CFBundleDisplayName: "Browser"
+      INFOPLIST_KEY_NSAppTransportSecurity: "{NSAllowsArbitraryLoads = 1;}"
+      INFOPLIST_KEY_UILaunchScreen: "{}"
       CODE_SIGNING_ALLOWED: NO
       CODE_SIGNING_REQUIRED: NO
       CODE_SIGN_IDENTITY: ""
