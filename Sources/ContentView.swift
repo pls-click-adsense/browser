@@ -13,7 +13,7 @@ struct WebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 
-// MARK: - TabSession (クッキー・メモ・URL監視)
+// MARK: - TabSession
 class TabSession: ObservableObject, Identifiable {
     let id: Int
     let userAgent: String
@@ -116,15 +116,12 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        // 全体の背景を白（またはシステムカラー）にして、画面いっぱいに広げる
         VStack(spacing: 0) {
-            
-            // --- 1. ヘッダー (URLバー) ---
+            // URLバー：上端の黒帯を塗りつぶす
             headerView
-                .padding(.top, 0) // 余分な余白をカット
                 .background(Color(UIColor.secondarySystemBackground).ignoresSafeArea(edges: .top))
 
-            // --- 2. メインコンテンツ (WebView) ---
+            // メインWebView
             ZStack {
                 ForEach(sessions.indices, id: \.self) { i in
                     WebView(session: sessions[i])
@@ -132,22 +129,18 @@ struct ContentView: View {
                         .opacity(i == active ? 1 : 0)
                         .allowsHitTesting(i == active)
                 }
-                
                 if showMemo {
-                    VStack {
-                        Spacer()
-                        memoArea
-                    }
+                    VStack { Spacer(); memoArea }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // --- 3. フッター (タブバー) ---
+            // タブバー：下端の黒帯を塗りつぶす
             tabBarView
                 .background(Color(UIColor.secondarySystemBackground).ignoresSafeArea(edges: .bottom))
         }
-        // ここが重要：VStack全体を画面端まで広げる（ただしコンテンツはSafeArea内）
-        .ignoresSafeArea(.keyboard) 
+        // 全体の背景
+        .background(Color(UIColor.secondarySystemBackground))
         .confirmationDialog("履歴削除", isPresented: $showingDeleteConfirm, titleVisibility: .visible) {
             Button("削除", role: .destructive) { sessions[active].clearCookies() }
             Button("キャンセル", role: .cancel) {}
@@ -155,35 +148,30 @@ struct ContentView: View {
     }
 
     var headerView: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 15) {
+        HStack(spacing: 12) {
+            HStack(spacing: 18) {
                 Button(action: { sessions[active].webView.goBack() }) { Image(systemName: "chevron.left") }
                 Button(action: { sessions[active].webView.goForward() }) { Image(systemName: "chevron.right") }
             }
             TextField("URL", text: $sessions[active].currentURL)
                 .textFieldStyle(.roundedBorder)
                 .textInputAutocapitalization(.never)
-                .keyboardType(.webSearch)
                 .onSubmit { loadURL() }
-            HStack(spacing: 15) {
+            HStack(spacing: 18) {
                 Button(action: { sessions[active].webView.reload() }) { Image(systemName: "arrow.clockwise") }
                 Button(action: { showingDeleteConfirm = true }) { Image(systemName: "trash") }
                 Button(action: { withAnimation { showMemo.toggle() } }) { Image(systemName: "note.text") }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 8) // システムが自動的に最適な位置に置く
     }
 
     var tabBarView: some View {
         HStack(spacing: 0) {
             ForEach(sessions.indices, id: \.self) { i in
-                Button(action: {
-                    sessions[active].saveCookies()
-                    sessions[active].saveMemo()
-                    active = i
-                }) {
-                    VStack(spacing: 2) {
+                Button(action: { active = i }) {
+                    VStack(spacing: 4) {
                         Text("\(i+1)").bold()
                         Text(["iPhone", "iPad", "PC", "Android", "IE"][i]).font(.system(size: 8))
                     }
@@ -199,8 +187,6 @@ struct ContentView: View {
     var memoArea: some View {
         TextEditor(text: $sessions[active].memo)
             .frame(height: 150)
-            .padding(8)
-            .background(Color(UIColor.systemBackground))
             .cornerRadius(10)
             .padding()
             .shadow(radius: 5)
