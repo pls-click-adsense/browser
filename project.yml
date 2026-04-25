@@ -5,17 +5,15 @@ options:
     iOS: "18.0"
 
 targets:
-  MyBBSApp:
+  Browser:
     type: application
     platform: iOS
     sources:
       - Sources
     settings:
-      # --- ここを追加：Info.plistを自動生成する ---
       GENERATE_INFOPLIST_FILE: YES
-      INFOPLIST_KEY_CFBundleDisplayName: "MyBBS"
-      INFOPLIST_KEY_UILaunchScreen_Generation: YES # 起動画面を自動生成
-      # ------------------------------------------
+      INFOPLIST_KEY_CFBundleDisplayName: "Browser"
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
       
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
