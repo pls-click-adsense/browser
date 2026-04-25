@@ -11,40 +11,25 @@ targets:
     sources:
       - Sources
     settings:
-      # --- Info.plist の自動生成 ---
       GENERATE_INFOPLIST_FILE: YES
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-      # --- 基本設定（日本語 & ローカライズ） ---
+      # --- 比率がおかしくなるのを防ぐ決定的な設定 ---
+      INFOPLIST_KEY_UILaunchScreen:
+        # 空のディクショナリを指定することで「標準の起動画面」を使用させ、
+        # アプリを全画面（ネイティブ解像度）で動かすように指示する
+        {}: 
+
+      # 日本語設定
       INFOPLIST_KEY_CFBundleDevelopmentRegion: "ja_JP"
-      INFOPLIST_KEY_CFBundleDisplayName: "5タブブラウザ"
+      INFOPLIST_KEY_CFBundleDisplayName: "Browser"
       
-      # --- ネットワーク・セキュリティ設定 ---
-      # HTTPサイトへのアクセスを許可
+      # ネットワーク設定
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
       
-      # --- ブラウザに必要なプライバシー権限 ---
-      # サイト側でカメラ・マイク・写真選択などを使う場合に必要
-      INFOPLIST_KEY_NSCameraUsageDescription: "ブラウザ内でのビデオ通話や写真撮影に使用します"
-      INFOPLIST_KEY_NSMicrophoneUsageDescription: "ブラウザ内での音声通話や録音に使用します"
-      INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "ブラウザから画像を保存するために使用します"
-      INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "画像をアップロードするために使用します"
-      
-      # --- UI・表示設定 ---
-      # 全画面表示を正しく行うための起動画面設定
-      INFOPLIST_KEY_UILaunchScreen:
-        showName: YES
-      # 画面回転の許可設定
-      INFOPLIST_KEY_UISupportedInterfaceOrientations:
-        - UIInterfaceOrientationPortrait
-        - UIInterfaceOrientationLandscapeLeft
-        - UIInterfaceOrientationLandscapeRight
-
-      # --- 署名なし実機ビルド用の設定 ---
+      # 署名なし実機ビルド用
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       AD_HOC_CODE_SIGNING_ALLOWED: YES
-
-      # デバッグ効率向上のためインデックス作成を有効に維持
-      COMPILER_INDEX_STORE_ENABLE: YES
