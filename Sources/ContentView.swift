@@ -63,23 +63,38 @@ class TabSession: ObservableObject, Identifiable {
 
     // --- Cookie Handling ---
     func saveCookies() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-                let arr = cookies.compactMap { cookie -> [String: Any]? in
-                    var dict = [String: Any]()
-                    for (key, value) in cookie.properties ?? [:] {
+    DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        self.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            let arr = cookies.compactMap { cookie -> [String: Any]? in
+                var dict = [String: Any]()
+                for (key, value) in cookie.properties ?? [:] {
+                    // JSONSerializationが扱える型（String, Number, Array, Dictionary）以外をフィルタリング・変換
+                    if let val = value as? Date {
+                        // Date型はタイムスタンプ（数値）に変換して保存
+                        dict[key.rawValue] = val.timeIntervalSince1970
+                    } else if value is NSString || value is NSNumber {
                         dict[key.rawValue] = value
                     }
-                    return dict
+                    // その他のJSON非対応型は無視するか、文字列にする
                 }
-                let url = self.tabDir().appendingPathComponent("cookies.json")
-                if let json = try? JSONSerialization.data(withJSONObject: arr) {
-                    try? json.write(to: url)
+                return dict
+            }
+            
+            let url = self.tabDir().appendingPathComponent("cookies.json")
+            do {
+                // JSONに変換可能か最終チェックしてから書き込み
+                if JSONSerialization.isValidJSONObject(arr) {
+                    let data = try JSONSerialization.data(withJSONObject: arr, options: [])
+                    try data.write(to: url)
+                    print("Successfully saved \(cookies.count) cookies.")
                 }
+            } catch {
+                print("JSON save error: \(error)")
             }
         }
     }
+}
 
     func loadCookies() {
         let url = tabDir().appendingPathComponent("cookies.json")
