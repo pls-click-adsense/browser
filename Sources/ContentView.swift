@@ -59,7 +59,6 @@ class TabSession: Identifiable, ObservableObject {
             cookieStore.setCookie(cookie) {}
         }
 
-        // KVO: URLの変化を監視してcurrentURLに反映
         webView.publisher(for: \.url)
             .compactMap { $0?.absoluteString }
             .receive(on: DispatchQueue.main)
@@ -111,32 +110,34 @@ struct ContentView: View {
         TabSession(id: 5, ua: "Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)")
     ]
 
+    // ホームインジケーターの高さをUIKitから取得
+    private var safeAreaBottomInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets.bottom ?? 0
+    }
+
     var body: some View {
-        // WebViewがベース：フル画面に広がる
         ZStack(alignment: .bottomTrailing) {
             ForEach(0..<5) { i in
                 WebViewContainer(webView: sessions[i].webView)
                     .opacity(i == activeIndex ? 1 : 0)
             }
-
             if showMemo {
                 memoOverlay
             }
         }
         .ignoresSafeArea()
-        // ヘッダーをノッチ込みで上に固定
         .safeAreaInset(edge: .top, spacing: 0) {
             headerView
         }
-        // フッターをホームインジケーター込みで下に固定
         .safeAreaInset(edge: .bottom, spacing: 0) {
             footerView
+                .padding(.bottom, safeAreaBottomInset)
         }
-        .ignoresSafeArea(.keyboard)
         .onAppear {
             sessions[0].loadInitialURL()
         }
-        // アクティブタブのURLをリアルタイムでURLバーに反映
         .onReceive(sessions[activeIndex].$currentURL) { url in
             if !isEditingURL {
                 inputURL = url
@@ -149,7 +150,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - ヘッダービュー
+    // MARK: - ヘッダー
 
     private var headerView: some View {
         HStack(spacing: 4) {
@@ -157,18 +158,12 @@ struct ContentView: View {
                 Image(systemName: "chevron.left")
                     .frame(width: 36, height: 44)
             }
-
             Button(action: { sessions[activeIndex].webView.goForward() }) {
                 Image(systemName: "chevron.right")
                     .frame(width: 36, height: 44)
             }
-
-            // URLバー：編集中は入力値、非編集中はWebViewの現在URL
             TextField("Search or URL", text: $inputURL, onEditingChanged: { editing in
                 isEditingURL = editing
-                if editing {
-                    // 編集開始時に全選択しやすいよう現在URLをセット済み
-                }
             }, onCommit: {
                 isEditingURL = false
                 loadURL()
@@ -177,12 +172,10 @@ struct ContentView: View {
             .keyboardType(.URL)
             .autocapitalization(.none)
             .disableAutocorrection(true)
-
             Button(action: { sessions[activeIndex].webView.reload() }) {
                 Image(systemName: "arrow.clockwise")
                     .frame(width: 36, height: 44)
             }
-
             Button(action: { showClearAlert = true }) {
                 Image(systemName: "trash")
                     .foregroundColor(.red)
@@ -203,7 +196,7 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: 60)
+        .frame(height: 52)
         .background(Color(.systemBackground))
     }
 
@@ -217,7 +210,7 @@ struct ContentView: View {
             .padding()
     }
 
-    // MARK: - フッタービュー
+    // MARK: - フッター
 
     private var footerView: some View {
         HStack(spacing: 0) {
@@ -226,14 +219,13 @@ struct ContentView: View {
                     Text("\(i + 1)")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 60)
+                        .frame(height: 52)
                         .background(activeIndex == i ? Color.blue.opacity(0.2) : Color.clear)
                 }
             }
-
             Button(action: { showMemo.toggle() }) {
                 Image(systemName: "note.text")
-                    .frame(width: 60, height: 60)
+                    .frame(width: 52, height: 52)
                     .foregroundColor(showMemo ? .orange : .primary)
             }
         }
@@ -245,11 +237,7 @@ struct ContentView: View {
     private func switchTab(to index: Int) {
         sessions[activeIndex].saveCookies()
         activeIndex = index
-
-        // 切り替え先のURLをURLバーに反映
         inputURL = sessions[index].currentURL
-
-        // 未ロードなら初期ページを開く
         if sessions[index].webView.url == nil {
             sessions[index].loadInitialURL()
         }
