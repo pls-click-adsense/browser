@@ -143,14 +143,14 @@ struct ContentView: View {
 
             // タブ一覧
             ScrollView(.horizontal) {
-                HStack {
-                    ForEach(Array(manager.tabs.enumerated()), id: \\.1.id) { i, tab in
-                        Button("Tab \(i)") {
-                            manager.selectedIndex = i
-                        }
-                    }
-                }
+    HStack {
+        ForEach(manager.tabs.indices, id: \\.self) { i in
+            Button("Tab \\(i)") {
+                manager.selectedIndex = i
             }
+        }
+    }
+}
 
             // Proxy設定
             HStack {
