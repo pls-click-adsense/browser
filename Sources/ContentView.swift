@@ -14,7 +14,8 @@ struct TabSession: Identifiable {
         config.websiteDataStore = WKWebsiteDataStore.nonPersistent()
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
-        if let url = URL(string: "https://www.google.com") {
+        // 初期URLをDuckDuckGoに変更
+        if let url = URL(string: "https://duckduckgo.com") {
             self.webView.load(URLRequest(url: url))
         }
     }
@@ -24,7 +25,7 @@ struct ContentView: View {
     @State private var activeIndex: Int = 0
     @State private var recentIndex: Int = 0
     @State private var showMemo: Bool = false
-    @State private var inputURL: String = "https://www.google.com"
+    @State private var inputURL: String = "https://duckduckgo.com"
     @State private var sessions: [TabSession] = [
         TabSession(id: 1, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
         TabSession(id: 2, ua: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
@@ -35,23 +36,24 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             HStack(spacing: 8) {
                 Button(action: { sessions[activeIndex].webView.goBack() }) {
                     Image(systemName: "chevron.left")
                 }.frame(width: 44, height: 44)
                 
-                TextField("URL", text: $inputURL, onCommit: loadURL)
+                TextField("Search or URL", text: $inputURL, onCommit: loadURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .keyboardType(.URL)
+                    .autocapitalization(.none)
                 
                 Button(action: { sessions[activeIndex].webView.reload() }) {
                     Image(systemName: "arrow.clockwise")
                 }.frame(width: 44, height: 44)
             }
             .padding(.horizontal)
+            .padding(.top, 10) // ステータスバー付近の余白
             .background(Color(.systemBackground))
 
-            // Main
             ZStack {
                 ForEach(0..<5) { i in
                     if i == activeIndex || i == recentIndex {
@@ -70,7 +72,6 @@ struct ContentView: View {
                 }
             }
 
-            // Footer
             HStack(spacing: 0) {
                 ForEach(0..<5) { i in
                     Button(action: { 
@@ -94,7 +95,7 @@ struct ContentView: View {
             }
             .background(Color(.systemGroupedBackground))
             
-            // 下部の余白（SafeArea対策を最もシンプルに）
+            // 下部の余白（ホームバー対策）
             Color(.systemGroupedBackground)
                 .frame(height: 34) 
         }
@@ -102,7 +103,16 @@ struct ContentView: View {
     }
 
     private func loadURL() {
-        let path = inputURL.hasPrefix("http") ? inputURL : "https://\(inputURL)"
+        // URLっぽくなければDuckDuckGo検索に飛ばす
+        let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path: String
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            path = trimmed.hasPrefix("http") ? trimmed : "https://\(trimmed)"
+        } else {
+            let query = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            path = "https://duckduckgo.com/?q=\(query)"
+        }
+        
         if let url = URL(string: path) {
             sessions[activeIndex].webView.load(URLRequest(url: url))
         }
