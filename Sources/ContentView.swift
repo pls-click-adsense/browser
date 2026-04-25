@@ -3,23 +3,23 @@ import WebKit
 import Combine
 import Foundation
 
-// MARK: - ブラウザの全機能を管理するContentView
+// MARK: - メインビュー（ContentView）
 struct ContentView: View {
-    // --- UserDefaultsによる永続化 ---
+    // --- 1. UserDefaultsによる永続保存（@AppStorage） ---
     @AppStorage("selectedUA") private var selectedUA: String = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1"
     @AppStorage("proxyHost") private var proxyHost: String = ""
     @AppStorage("proxyPort") private var proxyPort: Int = 8080
     @AppStorage("lastURL") private var lastURL: String = "https://www.google.com"
     
-    // --- 状態管理 ---
+    // --- 2. 内部状態管理 ---
     @State private var urlInput: String = ""
     @State private var isLoading: Bool = false
     @State private var estimatedProgress: Double = 0.0
     @State private var canGoBack: Bool = false
     @State private var canGoForward: Bool = false
-    @State private var refreshID = UUID() // 設定変更時にWebViewを物理的に作り直す
+    @State private var refreshID = UUID() // 設定変更時にWebViewを完全に再構築するためのトリガー
     
-    // --- UAリスト (iOS 18.4.1 完全準拠) ---
+    // --- 3. 5つの主要UAリスト (iOS 18.4.1 完全版) ---
     let uaOptions: [String: String] = [
         "Safari": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1",
         "Chrome": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/134.0.6998.92 Mobile/15E148 Safari/604.1",
@@ -30,23 +30,23 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // --- 設定・コントロールパネル ---
-            VStack(spacing: 10) {
-                // UAセレクター
+            // --- 上部：設定・アドレスバーパネル ---
+            VStack(spacing: 12) {
+                // UA切り替え（セグメント）
                 Picker("User Agent", selection: $selectedUA) {
                     ForEach(uaOptions.keys.sorted(), id: \.self) { key in
                         Text(key).tag(uaOptions[key]!)
                     }
                 }
                 .pickerStyle(SegmentedPickerStyle())
-                .onChange(of: selectedUA) { _ in applySettings() }
+                .onChange(of: selectedUA) { _, _ in applySettings() }
                 
-                // プロキシ設定
+                // プロキシ入力
                 HStack {
-                    Label("", systemImage: "network").labelStyle(.iconOnly)
-                    TextField("Proxy Host", text: $proxyHost)
+                    Image(systemName: "network")
+                    TextField("Proxy Host (IP)", text: $proxyHost)
                     TextField("Port", value: $proxyPort, formatter: NumberFormatter())
-                        .frame(width: 60)
+                        .frame(width: 70)
                     Button("適用") { applySettings() }
                         .buttonStyle(.borderedProminent)
                 }
@@ -57,26 +57,27 @@ struct ContentView: View {
                     TextField("URLを入力", text: $urlInput, onCommit: { loadNewURL() })
                         .keyboardType(.URL)
                         .autocapitalization(.none)
+                        .disableAutocorrection(true)
                         .padding(8)
                         .background(Color(.systemBackground))
-                        .cornerRadius(8)
+                        .cornerRadius(10)
                     
                     Button(action: loadNewURL) {
-                        Image(systemName: "magnifyingglass.circle.fill").font(.title2)
+                        Image(systemName: "arrow.right.circle.fill").font(.title)
                     }
                 }
             }
             .padding()
             .background(Color(.secondarySystemBackground))
             
-            // 読み込み進捗バー
+            // プログレスバー
             if isLoading {
                 ProgressView(value: estimatedProgress)
                     .progressViewStyle(LinearProgressViewStyle())
-                    .frame(height: 2)
+                    .frame(height: 3)
             }
 
-            // --- WebViewコンポーネント ---
+            // --- 中部：WebView本体 ---
             WebViewComponent(
                 url: URL(string: lastURL)!,
                 ua: selectedUA,
@@ -87,39 +88,51 @@ struct ContentView: View {
                 canGoBack: $canGoBack,
                 canGoForward: $canGoForward
             )
-            .id(refreshID) // 設定変更時にWebViewを再生成
+            .id(refreshID) // これを更新することでWebViewを物理的に再生成し、UA/プロキシを確実に適用する
             
-            // --- 下部ツールバー ---
+            // --- 下部：ナビゲーションツールバー ---
             HStack {
                 Button(action: { NotificationCenter.default.post(name: .goBack, object: nil) }) {
-                    Image(systemName: "chevron.left")
+                    Image(systemName: "chevron.backward").font(.title2)
                 }.disabled(!canGoBack)
+                
                 Spacer()
-                Button(action: { refreshID = UUID() }) {
-                    Image(systemName: "arrow.clockwise")
+                
+                Button(action: { applySettings() }) {
+                    Image(systemName: "arrow.clockwise").font(.title2)
                 }
+                
                 Spacer()
+                
                 Button(action: { NotificationCenter.default.post(name: .goForward, object: nil) }) {
-                    Image(systemName: "chevron.right")
+                    Image(systemName: "chevron.forward").font(.title2)
                 }.disabled(!canGoForward)
             }
-            .padding()
+            .padding(.horizontal, 40)
+            .padding(.vertical, 15)
             .background(Color(.secondarySystemBackground))
         }
         .onAppear { urlInput = lastURL }
     }
 
-    private func applySettings() { refreshID = UUID() }
+    // 設定を反映してWebViewを再構築
+    private func applySettings() {
+        refreshID = UUID()
+    }
     
+    // URLを整形して読み込む
     private func loadNewURL() {
-        let formatted = urlInput.lowercased().hasPrefix("http") ? urlInput : "https://\(urlInput)"
+        var formatted = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !formatted.lowercased().hasPrefix("http") {
+            formatted = "https://\(formatted)"
+        }
         lastURL = formatted
         urlInput = formatted
         applySettings()
     }
 }
 
-// MARK: - WKWebViewの実装と通知定義
+// MARK: - WebView内部実装 (UIViewRepresentable)
 extension Notification.Name {
     static let goBack = Notification.Name("goBack")
     static let goForward = Notification.Name("goForward")
@@ -143,17 +156,19 @@ struct WebViewComponent: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         
-        // プロキシ注入
-        if !proxyHost.isEmpty {
+        // プロキシ設定適用 (iOS 17.0+ 互換性チェック付き)
+        if #available(iOS 17.0, *), !proxyHost.isEmpty {
             let proxy = WKProxyConfiguration(httpProxy: proxyHost, port: proxyPort)
             config.websiteDataStore.proxyConfigurations = [proxy]
         }
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
-        webView.customUserAgent = ua // ロード前にセット
         
-        // 戻る・進むの通知監視
+        // UA設定 (重要: loadの前にセット)
+        webView.customUserAgent = ua
+        
+        // 監視設定（KVO）
         context.coordinator.setupObservers(for: webView)
         
         webView.load(URLRequest(url: url))
@@ -162,6 +177,7 @@ struct WebViewComponent: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
+    // KVOと通知の管理クラス
     class Coordinator: NSObject, WKNavigationDelegate {
         var parent: WebViewComponent
         var cancellables = Set<AnyCancellable>()
@@ -171,11 +187,13 @@ struct WebViewComponent: UIViewRepresentable {
         }
 
         func setupObservers(for webView: WKWebView) {
-            webView.publisher(for: \.isLoading).assign(to: \.parent.isLoading, on: self).store(in: &cancellables)
-            webView.publisher(for: \.estimatedProgress).assign(to: \.parent.progress, on: self).store(in: &cancellables)
-            webView.publisher(for: \.canGoBack).assign(to: \.parent.canGoBack, on: self).store(in: &cancellables)
-            webView.publisher(for: \.canGoForward).assign(to: \.parent.canGoForward, on: self).store(in: &cancellables)
+            // プロパティ監視
+            webView.publisher(for: \.isLoading).receive(on: DispatchQueue.main).assign(to: \.parent.isLoading, on: self).store(in: &cancellables)
+            webView.publisher(for: \.estimatedProgress).receive(on: DispatchQueue.main).assign(to: \.parent.progress, on: self).store(in: &cancellables)
+            webView.publisher(for: \.canGoBack).receive(on: DispatchQueue.main).assign(to: \.parent.canGoBack, on: self).store(in: &cancellables)
+            webView.publisher(for: \.canGoForward).receive(on: DispatchQueue.main).assign(to: \.parent.canGoForward, on: self).store(in: &cancellables)
             
+            // 通知センター経由の操作
             NotificationCenter.default.publisher(for: .goBack).sink { _ in webView.goBack() }.store(in: &cancellables)
             NotificationCenter.default.publisher(for: .goForward).sink { _ in webView.goForward() }.store(in: &cancellables)
         }
