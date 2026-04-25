@@ -154,28 +154,26 @@ class BrowserViewController: UIViewController {
     }
 
     private func setupConstraints() {
-        let safe = view.safeAreaLayoutGuide
+    NSLayoutConstraint.activate([
+        // ヘッダー（上に固定・高さ52）
+        headerView.topAnchor.constraint(equalTo: view.topAnchor),
+        headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        headerView.heightAnchor.constraint(equalToConstant: 52),
 
-        NSLayoutConstraint.activate([
-            // ヘッダー：画面の一番上(view.top)から始めて、safeArea.topの下52ptまで
-            headerView.topAnchor.constraint(equalTo: view.topAnchor),
-            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            headerView.bottomAnchor.constraint(equalTo: safe.topAnchor, constant: 52),
+        // フッター（下に固定・高さ52）
+        footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        footerView.heightAnchor.constraint(equalToConstant: 52),
 
-            // WebView：ヘッダー下からフッター上まで
-            webViewContainer.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            webViewContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            webViewContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webViewContainer.bottomAnchor.constraint(equalTo: footerView.topAnchor),
-
-            // フッター：画面の一番下(view.bottom)まで、safeArea.bottomの上52ptから始まる
-            footerView.topAnchor.constraint(equalTo: safe.bottomAnchor, constant: -52),
-            footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-    }
+        // WebView（ヘッダーとフッターの間を埋める）
+        webViewContainer.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+        webViewContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        webViewContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        webViewContainer.bottomAnchor.constraint(equalTo: footerView.topAnchor),
+    ])
+}
 
     // MARK: - Tab
 
