@@ -1,6 +1,38 @@
 import SwiftUI
 import WebKit
 
+// クッキーをUserDefaultsに保存・復元するヘルパー
+class CookieStore {
+    static func save(tabId: Int, cookies: [HTTPCookie]) {
+        let data = cookies.compactMap { cookie -> [String: Any]? in
+            var props = cookie.properties ?? [:]
+            // HTTPCookiePropertyKeyをStringに変換
+            var dict: [String: Any] = [:]
+            for (key, value) in props {
+                dict[key.rawValue] = value
+            }
+            return dict
+        }
+        UserDefaults.standard.set(data, forKey: "cookies_tab_\(tabId)")
+    }
+    
+    static func load(tabId: Int) -> [HTTPCookie] {
+        guard let data = UserDefaults.standard.array(forKey: "cookies_tab_\(tabId)") as? [[String: Any]] else {
+            return []
+        }
+        return data.compactMap { dict -> HTTPCookie? in
+            let props = Dictionary(uniqueKeysWithValues: dict.map {
+                (HTTPCookiePropertyKey($0.key), $0.value)
+            })
+            return HTTPCookie(properties: props)
+        }
+    }
+    
+    static func clear(tabId: Int) {
+        UserDefaults.standard.removeObject(forKey: "cookies_tab_\(tabId)")
+    }
+}
+
 struct TabSession: Identifiable {
     let id: Int
     let userAgent: String
@@ -11,10 +43,37 @@ struct TabSession: Identifiable {
         self.id = id
         self.userAgent = ua
         let config = WKWebViewConfiguration()
-        let uuid = UUID(uuidString: "00000000-0000-0000-0000-00000000000\(id)")!
-        config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
+        config.websiteDataStore = .nonPersistent()
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.customUserAgent = ua
+        
+        // 保存済みクッキーを復元
+        let cookies = CookieStore.load(tabId: id)
+        let cookieStore = config.websiteDataStore.httpCookieStore
+        let group = DispatchGroup()
+        for cookie in cookies {
+            group.enter()
+            cookieStore.setCookie(cookie) { group.leave() }
+        }
+    }
+    
+    // クッキーをUserDefaultsに保存
+    func saveCookies(completion: (() -> Void)? = nil) {
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            CookieStore.save(tabId: self.id, cookies: cookies)
+            completion?()
+        }
+    }
+    
+    func clearCookies(completion: (() -> Void)? = nil) {
+        CookieStore.clear(tabId: id)
+        let store = webView.configuration.websiteDataStore
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        store.fetchDataRecords(ofTypes: types) { records in
+            store.removeData(ofTypes: types, for: records) {
+                completion?()
+            }
+        }
     }
 }
 
@@ -110,6 +169,8 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     ForEach(0..<5) { i in
                         Button(action: {
+                            // タブ切り替え前に現在のクッキーを保存
+                            sessions[activeIndex].saveCookies()
                             recentIndex = activeIndex
                             activeIndex = i
                             inputURL = sessions[i].webView.url?.absoluteString ?? ""
@@ -137,14 +198,19 @@ struct ContentView: View {
             .onAppear {
                 guard !didLoad else { return }
                 didLoad = true
-                // アクティブタブだけ最初にロード、他は切り替え時にロード
                 if let url = URL(string: "https://duckduckgo.com") {
                     sessions[activeIndex].webView.load(URLRequest(url: url))
                 }
             }
+            // バックグラウンド移行時に全タブ保存
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                for session in sessions {
+                    session.saveCookies()
+                }
+            }
         }
     }
-    
+
     private func loadURL() {
         let trimmed = inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let path: String
@@ -164,16 +230,4 @@ struct WebViewContainer: UIViewRepresentable {
     let webView: WKWebView
     func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
-}
-
-extension TabSession {
-    func clearCookies(completion: (() -> Void)? = nil) {
-        let store = webView.configuration.websiteDataStore
-        let types = WKWebsiteDataStore.allWebsiteDataTypes()
-        store.fetchDataRecords(ofTypes: types) { records in
-            store.removeData(ofTypes: types, for: records) {
-                completion?()
-            }
-        }
-    }
 }
