@@ -1,5 +1,5 @@
-import SwiftUi
-import UiKit
+import SwiftUI
+import UIKit
 @main
 struct BrowserApp: App {
     init() {
