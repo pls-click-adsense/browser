@@ -19,19 +19,23 @@ jobs:
 
       - name: Build App (Code Signing Omitted)
         run: |
+          # -derivedDataPath を指定して出力先を強制的にカレントディレクトリの 'build' にする
           xcodebuild build \
             -project Browser.xcodeproj \
             -scheme Browser \
             -configuration Release \
             -sdk iphoneos \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
       - name: Create Payload and Zip (Pseudo-IPA)
         run: |
           mkdir -p Payload
-          cp -r build/Release-iphoneos/Browser.app Payload/
+          # xcodebuild の -derivedDataPath で指定した構造に合わせてコピー
+          cp -r build/Build/Products/Release-iphoneos/Browser.app Payload/
           zip -r Browser.ipa Payload
           
       - name: Upload Artifact
