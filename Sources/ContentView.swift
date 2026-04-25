@@ -60,9 +60,8 @@ final class BrowserTab: ObservableObject, Identifiable {
 
         // ---- DataStore: タブごとにディスク保存領域を分離（永続化） ----
         let storeName = "TabSession_\(id)"
-        let namespace = UUID(uuidString: "6ba7b810-9dad-11d1-80b4-00c04fd430c8")!
         let data = storeName.data(using: .utf8)!
-        var hash = Insecure.SHA1.hash(data: data)
+        let hash = Insecure.SHA1.hash(data: data) // Warning回避: letに変更
         var bytes = Array(hash)
         bytes[6] = (bytes[6] & 0x0f) | 0x50
         bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -71,16 +70,14 @@ final class BrowserTab: ObservableObject, Identifiable {
         config.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeUUID)
 
         // ---- Proxy 設定 (iOS 17+) ----
-        // 【修正箇所】applyCredential の引数を String に修正
         if #available(iOS 17.0, *), !profile.proxyHost.isEmpty {
-            var proxyConfig = ProxyConfiguration(
+            let proxyConfig = ProxyConfiguration( // Warning回避: letに変更
                 httpCONNECTProxy: NWEndpoint.hostPort(
                     host: NWEndpoint.Host(profile.proxyHost),
                     port: NWEndpoint.Port(integerLiteral: UInt16(profile.proxyPort))
                 )
             )
             if !profile.proxyUsername.isEmpty {
-                // ここを String の直接渡しに修正しました
                 proxyConfig.applyCredential(
                     username: profile.proxyUsername,
                     password: profile.proxyPassword
