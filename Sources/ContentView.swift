@@ -112,28 +112,26 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-
-            // MARK: ヘッダー
-            headerView
-
-            // MARK: WebView + メモオーバーレイ
-            ZStack(alignment: .bottomTrailing) {
-                ForEach(0..<5) { i in
-                    WebViewContainer(webView: sessions[i].webView)
-                        .opacity(i == activeIndex ? 1 : 0)
-                }
-
-                if showMemo {
-                    memoOverlay
-                }
+        // WebViewがベース：フル画面に広がる
+        ZStack(alignment: .bottomTrailing) {
+            ForEach(0..<5) { i in
+                WebViewContainer(webView: sessions[i].webView)
+                    .opacity(i == activeIndex ? 1 : 0)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            // MARK: フッター
+            if showMemo {
+                memoOverlay
+            }
+        }
+        .ignoresSafeArea()
+        // ヘッダーをノッチ込みで上に固定
+        .safeAreaInset(edge: .top, spacing: 0) {
+            headerView
+        }
+        // フッターをホームインジケーター込みで下に固定
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             footerView
         }
-        // キーボードのみ SafeArea を無視（レイアウトを崩さない）
         .ignoresSafeArea(.keyboard)
         .onAppear {
             sessions[0].loadInitialURL()
