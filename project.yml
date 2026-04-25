@@ -14,22 +14,26 @@ targets:
       GENERATE_INFOPLIST_FILE: YES
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-      # --- ビルドエラー回避設定 ---
-      # Releaseビルドでもプレビューやデバッグ用フラグを無視して通す設定
-      SWIFT_OPTIMIZATION_LEVEL: "-Onone" 
-      SWIFT_COMPILATION_MODE: singlefile
-      
+      # --- 実機ビルド & CI通過のための決定版設定 ---
+      # 全ての構成（Debug/Release）で最適化をオフにしてコンパイルエラーを回避
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      # デバッグシンボルを残す
+      GCC_GENERATE_DEBUGGING_SYMBOLS: YES
+      # Previewsは実機実行には不要なので切る
+      ENABLE_PREVIEWS: NO
+
       # 比率問題解決
       INFOPLIST_KEY_UILaunchScreen: {}
 
       # 日本語 & ネットワーク
       INFOPLIST_KEY_CFBundleDevelopmentRegion: "ja_JP"
-      INFOPLIST_KEY_CFBundleDisplayName: "Browser"
+      INFOPLIST_KEY_CFBundleDisplayName: "5タブブラウザ"
       INFOPLIST_KEY_NSAppTransportSecurity:
         NSAllowsArbitraryLoads: YES
       
-      # 署名なし設定
+      # --- 署名なし実機実行の魔法 ---
       CODE_SIGNING_ALLOWED: false
       CODE_SIGNING_REQUIRED: false
       CODE_SIGN_IDENTITY: ""
       AD_HOC_CODE_SIGNING_ALLOWED: YES
+      ENTITLEMENTS_REQUIRED: NO
